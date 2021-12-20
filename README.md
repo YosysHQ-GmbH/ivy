@@ -5,7 +5,8 @@ and strategies for proving them, and a tool for working with those files.
 
 The IVY tool
 - can formally prove the invariants to be correct,
-- can help mining invariants from the design semi-automatically, and
+- can help mining invariants from the design semi-automatically,
+- can help manage invariants and keep track of which are proven and which aren't, and
 - can generate SV code to use the invariants to refine proofs of other properties.
 
 Because IVY ultimatey produces a SystemVerilog constraints file it is possible
@@ -184,6 +185,6 @@ cutpoint arg1, arg2, ...;
 
 Valid in `proof..endproof` and `abstraction..endabstractions` blocks.
 
-Arguments for `blackbox` are SystemVerilog scopes and entities that should be blackboxed for the proof or abstraction.
+Arguments for `blackbox` statements are SystemVerilog scopes and entities that should be blackboxed for the proof or abstraction.
 
-Argument for `cutpoint` are SystemVerilog variable names that shuld be cut for the proof or abstraction.
+Arguments for `cutpoint` statements are SystemVerilog variable names that shuld be cut for the proof or abstraction.
