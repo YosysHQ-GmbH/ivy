@@ -1,8 +1,16 @@
 # InVariants with Yosys (IVY)
 
-## Overview
+IVY is a file-format for describing (inductive) invariants of SystemVerilog designs,
+and strategies for proving them, and a tool for working with those files.
 
-TBD
+The IVY tool
+- can formally prove the invariants to be correct,
+- can help mining invariants from the design semi-automatically, and
+- can generate SV code to use the invariants to refine proofs of other properties.
+
+Because IVY ultimatey produces a SystemVerilog constraints file it is possible
+to use IVY invariant files with virtually any tool for formal verification of
+SystemVerilog designs.
 
 ## IVY File Format
 
