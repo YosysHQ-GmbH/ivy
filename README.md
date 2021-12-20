@@ -1,39 +1,181 @@
 # InVariants with Yosys (IVY)
 
-Mockup IVY file
+## Overview
+
+TBD
+
+## IVY File Format
+
+Here's an example IVY file:
+
 ```SystemVerilog
-invariant myIV_1(x, y);
-  let s = x.foo + y.bar;
-  assert (s < 3);
+invariant iv(x, y);
+  assert iv1(x, y), iv2(x, y);
 endinvariant
 
-invariant myIV_2(x, y);
-  ...
+invariant iv1(x, y);
+  let foo = x.f1(y);
+  assert (foo < 3);
 endinvariant
 
-invariant myIV_3(x, y);
-  ...
+invariant iv2(x, y);
+  assert (x.f2(y));
 endinvariant
 
-invariant myIV(a, b, c);
-  refine myIV_1(a, b) as my1;
-  refine myIV_2(a, c) as my2;
-  refine myIV_3(b, c) as my3;
-  inductive (5) with myAxiom_nostall(a);
-  inductive (20) with myBB_fifo(a, 5);
-endinvarant
+condition c1(x, y);
+  when (x.f3(y));
+  unless (x.f4(y));
+endcondition
 
-abstraction myAbs_fifo_blackbox(x, n);
-  refine myIV_stall_timeout(a, n);
-  cutpoint x.fifo.memory;
-endabstraction
+proof p1(x, y);
+  // this translates to something like
+  //   assert (c1 && iv1 && iv2 -> $future(iv1 && iv2));
+  assert iv1(x, y), iv2(x, y);
+  when c1(x, y);
+endproof
 
-axiom myAxiom_nostall(x);
-  assert (!x.stall);
-endaxiom
+proof p2(x, y);
+  // this translates to something like
+  //   assert (iv2 -> $future(iv2));
+  //   assume (c1 && iv1 && iv2 -> $future(iv1 && iv2));
+  assert iv2(x, y);
+  with p1(x, y);
+endproof
 
-invariant myIV_stall_timeout(x, n);
-  assert (x.fifo.stallTimeout <= n);
-  inductive (50) at x.fifo;
+proof p3(x, y);
+  // this translates to something like
+  //   assert (iv1 && iv2 -> $future(iv1 && iv2));
+  //   assume (iv2 -> $future(iv2));
+  prove iv(x, y);
+  with p2(x, y);
+endproof
+
+bind uut iv(fifo, 42);   // automatically find out which proofs to run
+bind uut p3(fifo, 42);   // explicitly state what we want to prove
+```
+
+### Top-Level IVY Language Constructs
+
+#### Bind
+
+```
+bind <target> <proof|invariant>;
+```
+
+The bind constructs binds invariants or proofs to scopes or instances in
+the design under test. Ulitmately this defines what IVY is trying to prove.
+
+#### Proof
+
+```
+proof <name>(<formal_args>);
+  (<assert_stmt>|<with_stmt>|<when_unless_stmt>|<using_stmt>|<blackbox_cutpoint_stmt>)+
+endproof
+```
+
+The proof construct defines a proof for some of the invariants defined in the IVY file,
+under some of the conditions defined in the IVY file.
+
+#### Invariant
+
+```
+invariant <name>(<formal_args>);
+  (<let_stmt>|<assert_stmt>|<when_unless_stmt>|<using_stmt>)+
 endinvariant
 ```
+
+Defines an invariant of the circuit under test, either by providing SystemVerilog
+expressions referring to the bound entity, or by combinining other invariants and
+conditions.
+
+#### Condition
+
+```
+condition <name>(<formal_args>);
+  (<let_stmt>|<when_unless_stmt>|<using_stmt>)+
+endcondition
+```
+
+Defines a condition that can be used for case-breaking, lemmas, and restricting
+the domain of the proofs performed. IVY helps keeping track of which invariants
+have been proven for which conditions.
+
+#### Abstraction
+
+```
+abstraction <name>(<formal-args>);
+  (<with_stmt>|<using_stmt>|<blackbox_cutpoint_stmt>)+
+endabstractions
+```
+
+Defines an abstraction using one or more invariants and one or more blackbox
+and/or cutpoint definitions.
+
+### Statements
+
+#### Let
+
+```
+let <name> = <expr>;
+let <name>(<formal_args>) = <expr>;
+```
+
+Valid in `invariant..endinvariant` and `condition..endcondition`.
+
+Decares a local formal variable, like the SystemVerilog `let` keyword.
+
+#### Assert
+
+```
+assert arg1, arg2, ...;
+```
+
+Valid in `proof..endproof` and `invariant..endinvariant` blocks.
+
+Arguments are SystemVerilog expressions in `(..)` and/or references to invariants.
+
+#### With
+
+```
+with arg1, arg2, ...;
+```
+
+Valid in `proof..endproof` and `abstraction..endabstractions` blocks.
+
+Arguments are references to invariants and/or proofs.
+
+#### When/Unless
+
+```
+when arg1, arg2, ...;
+unless arg1, arg2, ...;
+```
+
+Valid in `condition..endcondition`, `proof..endproof` and `invariant..endinvariant` blocks.
+
+Arguments are SystemVerilog expressions in `(..)` and/or references to conditions.
+
+#### Using
+
+```
+when arg1, arg2, ...;
+unless arg1, arg2, ...;
+```
+
+Valid in `proof..endproof`, `invariant..endinvariant`, `condition..endcondition`, and `abstraction..endabstractions` blocks.
+
+Arguments are SystemVerilog scopes and entities that should be preserved for the proof. (The final set of preserved entities
+for any given proof is the union of all the relevant `using` statements.)
+
+#### Backbox/Cutpoint
+
+```
+blackbox arg1, arg2, ...;
+cutpoint arg1, arg2, ...;
+```
+
+Valid in `proof..endproof` and `abstraction..endabstractions` blocks.
+
+Arguments for `blackbox` are SystemVerilog scopes and entities that should be blackboxed for the proof or abstraction.
+
+Argument for `cutpoint` are SystemVerilog variable names that shuld be cut for the proof or abstraction.
