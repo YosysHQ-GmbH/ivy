@@ -6,18 +6,18 @@ For example by only adding `invariant .. endinvariant` and `proof .. endproof` w
 invariant foobar;
   @(posedge clock) disable iff (reset)   // or default clocking
   X -> Y, Z,                             // Equivalent to (!X || Y) && Z
-  A -> B => C -> D;                      // Expr with max => operator
+  A -> B => C -> D;                      // Expression with new `=>` operator
 endinvariant
 ```
 
 The `=>` operator has the same precedence and associativity as `->` and `<->`. (That is they are right associative. ;)
 Note that `=>` is already used as operator in the specify path and coverage point parts of the SV language. Neither
-conflicts with the use of this operator in `invariant` blocks.
+conflicts with the use of this operator in `invariant` expressions.
 
 The semantic of `=>` is similar to that of `|=>`, except that `=>` checks the consequent part immediately after the clock event,
-whereas `|=>` waits for the next clock events and uses the values sampled by that next clock event.
+whereas `|=>` waits for the next clock event and then checks the values sampled by that next clock event.
 
-Thus `X => Y` is basically equivalent to `X -> $future_gclk(Y)` in an SVA property,
+Thus `X => Y` is basically equivalent to `X |-> $future_gclk(Y)` in an SVA property,
 iff the global clock includes all clock events that can result in a change the value of `Y`.
 Like with the `$future_glck()` function, it is also illegal to nest instances of the `=>` operator.
 
