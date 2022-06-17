@@ -15,176 +15,65 @@ SystemVerilog designs.
 
 ## IVY File Format
 
-Here's an example IVY file:
-
-```SystemVerilog
-invariant iv(x, y);
-  assert iv1(x, y), iv2(x, y);
-endinvariant
-
-invariant iv1(x, y);
-  let foo = x.f1(y);
-  assert (foo < 3);
-endinvariant
-
-invariant iv2(x, y);
-  assert (x.f2(y));
-endinvariant
-
-condition c1(x, y);
-  when (x.f3(y));
-  unless (x.f4(y));
-endcondition
-
-proof p1(x, y);
-  // this translates to something like
-  //   assert (c1 && iv1 && iv2 -> $future(iv1 && iv2));
-  assert iv1(x, y), iv2(x, y);
-  when c1(x, y);
-endproof
-
-proof p2(x, y);
-  // this translates to something like
-  //   assert (iv2 -> $future(iv2));
-  //   assume (c1 && iv1 && iv2 -> $future(iv1 && iv2));
-  assert iv2(x, y);
-  with p1(x, y);
-endproof
-
-proof p3(x, y);
-  // this translates to something like
-  //   assert (iv1 && iv2 -> $future(iv1 && iv2));
-  //   assume (iv2 -> $future(iv2));
-  prove iv(x, y);
-  with p2(x, y);
-endproof
-
-bind uut iv(fifo, 42);   // automatically find out which proofs to run
-bind uut p3(fifo, 42);   // explicitly state what we want to prove
-```
-
-### Top-Level IVY Language Constructs
-
-#### Bind
+The IVY file fomat is simply an extension to SystemVerilog, adding `invariant .. endinvariant`
+and `proof .. endproof` blocks to the language. Those statements can either be used directly
+within the unit under test, optionally guarded by an `` `ifdef ``, or they can be put in an
+extra file that hooks into the unit under test using the `bind()` statement.
 
 ```
-bind <target> <proof|invariant>;
-```
-
-The bind constructs binds invariants or proofs to scopes or instances in
-the design under test. Ulitmately this defines what IVY is trying to prove.
-
-#### Proof
-
-```
-proof <name>(<formal_args>);
-  (<assert_stmt>|<with_stmt>|<when_unless_stmt>|<using_stmt>|<blackbox_cutpoint_stmt>)+
-endproof
-```
-
-The proof construct defines a proof for some of the invariants defined in the IVY file,
-under some of the conditions defined in the IVY file.
-
-#### Invariant
-
-```
-invariant <name>(<formal_args>);
-  (<let_stmt>|<assert_stmt>|<when_unless_stmt>|<using_stmt>)+
+invariant foobar;
+  @(posedge clock) disable iff (reset)   // or default clocking
+  X -> Y, Z,                             // Equivalent to (!X || Y) && Z
+  A -> B => C -> D;                      // Expression with new `=>` operator
 endinvariant
 ```
 
-Defines an invariant of the circuit under test, either by providing SystemVerilog
-expressions referring to the bound entity, or by combinining other invariants and
-conditions.
+The `=>` operator has the same precedence and associativity as `->` and `<->`. (That is they are right associative. ;)
+Note that `=>` is already used as operator in the specify path and coverage point parts of the SV language. Neither
+conflicts with the use of this operator in `invariant` expressions.
 
-#### Condition
+The semantic of `=>` is similar to that of `|=>`, except that `=>` checks the consequent part immediately after the clock event,
+whereas `|=>` waits for the next clock event and then checks the values sampled by that next clock event.
 
-```
-condition <name>(<formal_args>);
-  (<let_stmt>|<when_unless_stmt>|<using_stmt>)+
-endcondition
-```
-
-Defines a condition that can be used for case-breaking, lemmas, and restricting
-the domain of the proofs performed. IVY helps keeping track of which invariants
-have been proven for which conditions.
-
-#### Abstraction
+Thus `X => Y` is basically equivalent to `X |-> $future_gclk(Y)` in an SVA property,
+iff the global clock includes all clock events that can result in a change the value of `Y`.
+Like with the `$future_glck()` function, it is also illegal to nest instances of the `=>` operator.
 
 ```
-abstraction <name>(<formal-args>);
-  (<with_stmt>|<using_stmt>|<blackbox_cutpoint_stmt>)+
-endabstractions
+invariant quux;
+  @(posedge clock) disable iff (reset)
+  control42 ? (A -> B => C) : (X -> Y => Z);
+endinvariant
+
+invariant quuxbar;  // just a name for the intersection of "foobar" and "quux"
+  foobar, quux;
+endinvariant
+
+proof alu_proof;   // prove (SVA) alu abstraction properties with k-induction
+  blackbox lsu;
+  assert property (alu_abstraction_prop1);
+  assert property (alu_abstraction_prop2);
+  assert property (alu_abstraction_prop3);
+  method "kind(depth=8)";
+endproof
+
+proof invar_proof;   // prove invariants with k-induction
+  blackbox alu, lsu;
+  assume proof (alu_proof);   // assume everything asserted in proof alu_proof
+  assert invariant (foobar);
+  assert invariant (quux);
+  method "kind(depth=12)";
+endproof
+
+proof req_resp_proof;   // prove request-response property with IPC
+  cutpoint reg_bypass_value;
+  assume invariant (quuxbar);  // implicit link to invar_proof (or verification error if unresolvable)
+  assert property (req_resp_check);
+  method "ipc(depth=27)";
+endproof
+
+assert proof (req_resp_proof);  // implies all other proofs up in the dependency chain
 ```
 
-Defines an abstraction using one or more invariants and one or more blackbox
-and/or cutpoint definitions.
-
-### Statements
-
-#### Let
-
-```
-let <name> = <expr>;
-let <name>(<formal_args>) = <expr>;
-```
-
-Valid in `invariant..endinvariant` and `condition..endcondition`.
-
-Decares a local formal variable, like the SystemVerilog `let` keyword.
-
-#### Assert
-
-```
-assert arg1, arg2, ...;
-```
-
-Valid in `proof..endproof` and `invariant..endinvariant` blocks.
-
-Arguments are SystemVerilog expressions in `(..)` and/or references to invariants.
-
-#### With
-
-```
-with arg1, arg2, ...;
-```
-
-Valid in `proof..endproof` and `abstraction..endabstractions` blocks.
-
-Arguments are references to invariants and/or proofs.
-
-#### When/Unless
-
-```
-when arg1, arg2, ...;
-unless arg1, arg2, ...;
-```
-
-Valid in `condition..endcondition`, `proof..endproof` and `invariant..endinvariant` blocks.
-
-Arguments are SystemVerilog expressions in `(..)` and/or references to conditions.
-
-#### Using
-
-```
-when arg1, arg2, ...;
-unless arg1, arg2, ...;
-```
-
-Valid in `proof..endproof`, `invariant..endinvariant`, `condition..endcondition`, and `abstraction..endabstractions` blocks.
-
-Arguments are SystemVerilog scopes and entities that should be preserved for the proof. (The final set of preserved entities
-for any given proof is the union of all the relevant `using` statements.)
-
-#### Backbox/Cutpoint
-
-```
-blackbox arg1, arg2, ...;
-cutpoint arg1, arg2, ...;
-```
-
-Valid in `proof..endproof` and `abstraction..endabstractions` blocks.
-
-Arguments for `blackbox` statements are SystemVerilog scopes and entities that should be blackboxed for the proof or abstraction.
-
-Arguments for `cutpoint` statements are SystemVerilog variable names that shuld be cut for the proof or abstraction.
+Arguments to proofs and invariants are formal arguments, similar to arguments to properties and sequences,
+and should be resolved by the SV front-end using the same mechanism.
