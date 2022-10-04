@@ -1,17 +1,20 @@
 # InVariants with Yosys (IVY)
 
-IVY is a file-format for describing (inductive) invariants of SystemVerilog designs,
-and strategies for proving them, and a tool for working with those files.
+The IVY defines SystemVerilog langage extensions for describing (inductive) invariants of
+SystemVerilog designs, for strengthening proofs of SVA properties, and for describing strategies
+for proving those invariants and SVA properties.
+
+IVY can be thought of as a proof-assistent 
 
 The IVY tool
-- can formally prove the invariants to be correct,
+- can formally prove invariants and SVA properties to be correct,
 - can help mining invariants from the design semi-automatically,
 - can help manage invariants and keep track of which are proven and which aren't, and
-- can generate SV code to use the invariants to refine proofs of other properties.
+- can generate SystemVerilog SVA code for assuming the proven invariants.
 
-Because IVY ultimatey produces a SystemVerilog constraints file it is possible
-to use IVY invariant files with virtually any tool for formal verification of
-SystemVerilog designs.
+Because IVY can produce SystemVerilog constraints files for the proven invariants, it is possible
+to use IVY invariant files to strengthen proofs performed with virtually any tool for formal
+verification of SystemVerilog designs.
 
 ## IVY File Format
 
@@ -20,12 +23,15 @@ and `proof .. endproof` blocks to the language. Those statements can either be u
 within the unit under test, optionally guarded by an `` `ifdef ``, or they can be put in an
 extra file that hooks into the unit under test using the `bind()` statement.
 
+Proofs and invariants support formal arguments, similar to arguments to properties and sequences,
+and should be resolved by the SV front-end using the same mechanism.
+
 ### Invariant-Endinvariant Blocks
 
 An invariant consists of an optional clocking block, and a comma-seperated list of invariant expressions.
 Invariant expressions are Verilog expressions that may contain the new `=>` operator described below.
 
-```
+```SystemVerilog
 invariant foobar;
   @(posedge clock) disable iff (reset)   // or default clocking
   X -> Y, Z,                             // Equivalent to (!X || Y) && Z
@@ -35,8 +41,8 @@ endinvariant
 
 #### The infix and prefix => operators
 
-Note that `=>` is already used as operator in the specify path and coverage point parts of the SV language. Neither
-conflicts with the use of this operator in `invariant` expressions.
+> Note that `=>` is already used as operator in the specify path and coverage point parts of the SV language.
+> Neither conflicts with the use of this operator in `invariant` expressions.
 
 The infix `=>` operator has the same precedence and associativity as `->` and `<->` (right associative).
 
@@ -47,63 +53,82 @@ Thus `X => Y` is basically equivalent to `X |-> $future_gclk(Y)` in an SVA prope
 iff the global clock includes all clock events that can result in a change of the value of `Y`.
 Like with the `$future_glck()` function, it is also illegal to nest instances of the `=>` operator.
 
-The prefix `=>` operator evaluates to stable value of the argument after the clock event.
+The prefix `=>` operator has the same precedence as the infix `=>` operator and evaluates to stable value of the argument after the clock event.
 Thus `=> Y` is equivalent to `$future_gclk(Y)` (under the same conditions as above).
 
-#### $past, $stable, $rose, $fell in invariant expressions
+#### $rose, $fell, $stable, $changed, and $past in invariant expressions
 
+The sampled value functions `$rose()`, `$fell()`, `$stable()`, `$changed()`, and `$past()`
+can be used in the right hand side of an infix or prefix `=>` operator, but only without
+explicit clocking event argument. For example:
 
+```SystemVerilog
+invariant regA;
+  @(posedge clock) !EN => $stable(Q)
+endinvariant
+```
+
+Which is equivalent to writing:
+
+```SystemVerilog
+invariant regA;
+  (=> $rose(clock)) -> !EN => $stable(Q)
+endinvariant
+```
 
 ### Proof-Endproof Blocks
 
-```
-proof proof_1;
+```SystemVerilog
+// define a new proof. all statements from other proofs listed in the "extends" declaration are
+// effectively copied into this proof before the statements in the body of this proof declaration.
+proof my_proof extends base_proof;
+  use property property_1;     // assume an SVA property (that needs to be proven independently)
+  use invariant invariant_1;   // assume an invariant (that needs to be proven independently)
+  use proof proof_1;           // assume every invariant and property asserted by another proof
+
+  assert property property_2;       // prove an SVA property
+  assert invariant invariant_2;     // prove an invariant
+
+  // Use "inside" and "disable" to whitelist and blacklist parts of the design hierarchy.
+  // Connections between "inside" blocks, and those blocks and top-level module ports, are preserved,
+  // as well as invariants and properties contraining those signals.
+  inside cpu;       // blackboxes everything outside of the given entity (may list multiple entities)
+  disable cpu.alu;  // blackbox a part of the design hierarchy
+
+  // An "implements" statement has no effect on the proof that contains it, but any proof using this
+  // proof (with a "use" statement) will implicitly blackbox the entities specified in the "implements"
+  // clause in this proof. This can be used to easily prove and use abstractions.
+  implements cpu.regfile;
+
+  // Key-value pairs to configure the solver. These are "vendor specific", and if another vendor would
+  // support the same language extension, they would likely implement a different set of config switches.
   config depth = 8;
+  config method = "k-induction";
+  config engine = "smtbmc yices";
+endproof
+
+// A top-level proof that doesn't assert anything, just uses the set of proofs that should be proven,
+// can be used to organize proofs. If any proofs are "use"-ing properties or invariants directly, then
+// IVY will check that those are asserted by at least one proof that is referenced in the hierarchy below
+// the top proof.
+proof top_proof;
+  use my_proof;
+  use another_proof(42, "darkstar");
 endproof
 ```
 
-Some existing SV keywords that we may want to use for one thing or another in proof blocks:  
+TBD: Using "constraint" expressions and "table" statements, or something similar, to construct some
+mechanism for partitioning cases.
+
+TBD: Some kind of "automatic use" combined with generate-for-loops to create lists of proofs the tool
+can pick from to prove the properties and/or invariants that proofs (anywhere in the design hierarchy)
+are "use"-ing directly.
+
+> Some existing SV keywords that we may want to re-use for one thing or another in proof blocks:  
 `assert assume restrict cover automatic before config disable constraint cross expect extends
 force global local implements implies inside matches priority property pure release solve static
 super table tagged task use virtual wildcard with within`
 
 ## Example IVY Project
 
-```
-invariant quux;
-  @(posedge clock) disable iff (reset)
-  control42 ? (A -> B => C) : (X -> Y => Z);
-endinvariant
-
-invariant quuxbar;  // just a name for the intersection of "foobar" and "quux"
-  foobar, quux;
-endinvariant
-
-proof alu_proof;   // prove (SVA) alu abstraction properties with k-induction
-  blackbox lsu;
-  assert property (alu_abstraction_prop1);
-  assert property (alu_abstraction_prop2);
-  assert property (alu_abstraction_prop3);
-  method "kind(depth=8)";
-endproof
-
-proof invar_proof;   // prove invariants with k-induction
-  blackbox alu, lsu;
-  assume proof (alu_proof);   // assume everything asserted in proof alu_proof
-  assert invariant (foobar);
-  assert invariant (quux);
-  method "kind(depth=12)";
-endproof
-
-proof req_resp_proof;   // prove request-response property with IPC
-  cutpoint reg_bypass_value;
-  assume invariant (quuxbar);  // implicit link to invar_proof (or verification error if unresolvable)
-  assert property (req_resp_check);
-  method "ipc(depth=27)";
-endproof
-
-assert proof (req_resp_proof);  // implies all other proofs up in the dependency chain
-```
-
-Arguments to proofs and invariants are formal arguments, similar to arguments to properties and sequences,
-and should be resolved by the SV front-end using the same mechanism.
+TBD
