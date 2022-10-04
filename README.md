@@ -4,7 +4,7 @@ The IVY defines SystemVerilog langage extensions for describing (inductive) inva
 SystemVerilog designs, for strengthening proofs of SVA properties, and for describing strategies
 for proving those invariants and SVA properties.
 
-IVY can be thought of as a proof-assistent 
+IVY can be thought of as a proof-assistent for digital circuits and formal safety properties.
 
 The IVY tool
 - can formally prove invariants and SVA properties to be correct,
