@@ -53,8 +53,10 @@ Thus `X => Y` is basically equivalent to `X |-> $future_gclk(Y)` in an SVA prope
 iff the global clock includes all clock events that can result in a change of the value of `Y`.
 Like with the `$future_glck()` function, it is also illegal to nest instances of the `=>` operator.
 
-The prefix `=>` operator has the same precedence as the infix `=>` operator and evaluates to stable value of the argument after the clock event.
-Thus `=> Y` is equivalent to `$future_gclk(Y)` (under the same conditions as above).
+The prefix `=>` operator has the same precedence as the infix `=>` operator and evaluates to the stable value of the argument
+after the clock event. Thus `=> Y` is equivalent to `$future_gclk(Y)` (under the same conditions as above). Note that the
+prefix `=>` operator evaluates to whatever type its argument evaluates to, whereas the infix `=>` operator always evaluates to
+a single bit logic value.
 
 #### $rose, $fell, $stable, $changed, and $past in invariant expressions
 
