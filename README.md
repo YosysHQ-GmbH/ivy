@@ -20,6 +20,11 @@ and `proof .. endproof` blocks to the language. Those statements can either be u
 within the unit under test, optionally guarded by an `` `ifdef ``, or they can be put in an
 extra file that hooks into the unit under test using the `bind()` statement.
 
+### Invariant-Endinvariant Blocks
+
+An invariant consists of an optional clocking block, and a comma-seperated list of invariant expressions.
+Invariant expressions are Verilog expressions that may contain the new `=>` operator described below.
+
 ```
 invariant foobar;
   @(posedge clock) disable iff (reset)   // or default clocking
@@ -28,16 +33,41 @@ invariant foobar;
 endinvariant
 ```
 
-The `=>` operator has the same precedence and associativity as `->` and `<->`. (That is they are right associative. ;)
+#### The infix and prefix => operators
+
 Note that `=>` is already used as operator in the specify path and coverage point parts of the SV language. Neither
 conflicts with the use of this operator in `invariant` expressions.
+
+The infix `=>` operator has the same precedence and associativity as `->` and `<->` (right associative).
 
 The semantic of `=>` is similar to that of `|=>`, except that `=>` checks the consequent part immediately after the clock event,
 whereas `|=>` waits for the next clock event and then checks the values sampled by that next clock event.
 
 Thus `X => Y` is basically equivalent to `X |-> $future_gclk(Y)` in an SVA property,
-iff the global clock includes all clock events that can result in a change the value of `Y`.
+iff the global clock includes all clock events that can result in a change of the value of `Y`.
 Like with the `$future_glck()` function, it is also illegal to nest instances of the `=>` operator.
+
+The prefix `=>` operator evaluates to stable value of the argument after the clock event.
+Thus `=> Y` is equivalent to `$future_gclk(Y)` (under the same conditions as above).
+
+#### $past, $stable, $rose, $fell in invariant expressions
+
+
+
+### Proof-Endproof Blocks
+
+```
+proof proof_1;
+  config depth = 8;
+endproof
+```
+
+Some existing SV keywords that we may want to use for one thing or another in proof blocks:  
+`assert assume restrict cover automatic before config disable constraint cross expect extends
+force global local implements implies inside matches priority property pure release solve static
+super table tagged task use virtual wildcard with within`
+
+## Example IVY Project
 
 ```
 invariant quux;
