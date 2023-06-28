@@ -1,0 +1,17 @@
+[options]
+top top
+
+[read]
+read -sv example.svi
+
+[file example.svi]
+module top(input a);
+
+    invariant always_a;
+        a;
+    endinvariant
+
+    proof prove_always_a;
+        assert invariant always_a;
+    endproof
+endmodule

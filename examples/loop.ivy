@@ -1,0 +1,28 @@
+[options]
+top top
+
+[read]
+read -sv loop.svi
+
+[file loop.svi]
+module top(input a);
+
+    invariant always_a;
+        a;
+    endinvariant
+
+    invariant a_always;
+        a;
+    endinvariant
+
+    proof prove_always_a;
+        use invariant a_always;
+        assert invariant always_a;
+    endproof
+
+    proof prove_a_always;
+        use invariant always_a;
+        assert invariant a_always;
+    endproof
+
+endmodule

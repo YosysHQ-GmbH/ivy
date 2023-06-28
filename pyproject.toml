@@ -1,0 +1,99 @@
+[project]
+name = "yosys_ivy"
+version = "0.0.1"
+description = "Invariants with Yosys"
+
+requires-python = ">=3.8"
+dependencies = [
+    # "yosys_mau"  # TODO publish to PyPI or use git dependency?
+]
+
+[project.optional-dependencies]
+dev = [
+    # Documentation
+    "sphinx",
+    "furo",
+
+    # Testing
+    "pytest",
+    "pytest-cov",
+    "pytest-xdist[psutil]",
+
+    # Formatting
+    "black",
+
+    # Linting
+    "ruff",
+
+    # Type checking
+    "pyright==1.1.311",
+    # jix: When using Python 3.8, newer versions of pyright report spurious
+    # errors. With Python 3.11 and newer pyright, those are not reported, and I
+    # think the code is fine, but I haven't figured out if this corresponds to
+    # any known issues in pyright nor have I produced a minimal reproducer.
+]
+
+[project.scripts]
+ivy = "yosys_ivy:main"
+
+[tool.black]
+line-length = 100
+
+[tool.ruff]
+line-length = 100
+
+select = ["E", "F", "I"]
+fixable = [
+    "I",    # Import order
+    "F401", # Imported but unused
+]
+ignore = ["E731"]
+
+[tool.pytest.ini_options]
+addopts = ["--import-mode=importlib"]
+
+filterwarnings = [ # Remove this once https://github.com/pytest-dev/pytest-cov/issues/557 hits a pytest-cov release
+    "error",
+    "ignore:The --rsyncdir command line argument and rsyncdirs config variable are deprecated.:DeprecationWarning",
+]
+
+[tool.pyright]
+
+strictListInference = true
+strictDictionaryInference = true
+strictSetInference = true
+
+# Essentially strict mode but as warnings instead of errors, this also allows
+# us to exclude some reports project-wide which strict mode doesn't allow.
+reportConstantRedefinition = "warning"
+reportDeprecated = "warning"
+reportDuplicateImport = "warning"
+reportFunctionMemberAccess = "warning"
+reportIncompatibleMethodOverride = "warning"
+reportIncompatibleVariableOverride = "warning"
+reportIncompleteStub = "warning"
+reportInconsistentConstructor = "warning"
+reportInvalidStubStatement = "warning"
+reportMatchNotExhaustive = "warning"
+reportMissingParameterType = "warning"
+reportMissingTypeArgument = "warning"
+reportOverlappingOverload = "warning"
+reportTypeCommentUsage = "warning"
+reportUnknownArgumentType = "warning"
+reportUnknownLambdaType = "warning"
+reportUnknownMemberType = "warning"
+reportUnknownParameterType = "warning"
+reportUnknownVariableType = "warning"
+reportUnnecessaryCast = "warning"
+reportUnnecessaryComparison = "warning"
+reportUnnecessaryContains = "warning"
+reportUnnecessaryIsInstance = "warning"
+reportUnusedClass = "warning"
+reportUnusedImport = "warning"
+reportUnusedFunction = "warning"
+reportUnusedVariable = "warning"
+reportUntypedBaseClass = "warning"
+reportUntypedClassDecorator = "warning"
+reportUntypedFunctionDecorator = "warning"
+reportUntypedNamedTuple = "warning"
+reportPrivateUsage = "warning"
