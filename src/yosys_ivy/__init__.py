@@ -116,9 +116,14 @@ class IvyName:
     parts: tuple[str, ...]
 
     @classmethod
-    def simple(cls, name: str) -> IvyName:
-        # TODO upgrade to the hierarchical revision of the JSON format
-        return cls((name,))
+    def from_json(cls, name: list[str]) -> IvyName:
+        return cls(tuple(name))
+
+    def local(self, name: str | list[str]) -> IvyName:
+        if isinstance(name, list):
+            return IvyName(tuple(name))
+
+        return IvyName((*self.parts[:-1], name))
 
     @property
     def filename(self) -> str:
@@ -151,18 +156,18 @@ class IvyProof:
 
     filename: str
 
-    def __init__(self, name: IvyName, json_data: Any):
+    def __init__(self, json_data: Any):
         self.json_data = json_data
 
-        self.name = name
+        self.name = IvyName(tuple(json_data["name"]))
         self.top_level = self.json_data["top_level"]
         self.src_loc = self.json_data["srcloc"]
-        self.use_proof = StableSet(IvyName.simple(name) for name in self.json_data["use_proof"])
+        self.use_proof = StableSet(self.name.local(name) for name in self.json_data["use_proof"])
         self.use_invariant = StableSet(
-            IvyName.simple(name) for name in self.json_data["use_invariant"]
+            self.name.local(name) for name in self.json_data["use_invariant"]
         )
         self.assert_invariant = StableSet(
-            IvyName.simple(name) for name in self.json_data["assert_invariant"]
+            self.name.local(name) for name in self.json_data["assert_invariant"]
         )
 
     def edges(self) -> Collection[IvyName]:
@@ -180,10 +185,10 @@ class IvyInvariant:
 
     asserted_by: StableSet[IvyName]
 
-    def __init__(self, name: IvyName, json_data: Any):
+    def __init__(self, json_data: Any):
         self.json_data = json_data
 
-        self.name = name
+        self.name = IvyName(tuple(json_data["name"]))
         self.src_loc = self.json_data["srcloc"]
 
         self.asserted_by = StableSet()
@@ -209,13 +214,13 @@ class IvyData:
 
         self.filenames = set()
 
-        for name, proof_data in json_data["proofs"].items():
-            proof = IvyProof(IvyName.simple(name), proof_data)
+        for proof_data in json_data["proofs"]:
+            proof = IvyProof(proof_data)
             proof.filename = self.uniquify(proof.name.filename)
             self.proofs[proof.name] = proof
 
-        for name, invariant_data in json_data["invariants"].items():
-            invariant = IvyInvariant(IvyName.simple(name), invariant_data)
+        for invariant_data in json_data["invariants"]:
+            invariant = IvyInvariant(invariant_data)
             invariant.filename = self.uniquify(invariant.name.filename)
             self.invariants[invariant.name] = invariant
 
