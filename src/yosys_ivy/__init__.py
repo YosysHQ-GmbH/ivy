@@ -130,9 +130,17 @@ class IvyName:
         joined = ".".join(self.parts)
         return re.sub(r"[^a-zA-Z0-9_.]|^[.]", "_", joined) or "unknown"
 
+    @property
+    def instance_names(self) -> tuple[str, ...]:
+        return self.parts[1::2]
+
+    @property
+    def module_names(self) -> tuple[str, ...]:
+        return self.parts[::2]
+
     def __str__(self) -> str:
         str_parts: list[str] = []
-        for part in self.parts:
+        for part in self.instance_names:
             if re.match(r"^[a-zA-Z0-9_]*$", part):
                 str_parts.append(part)
             else:
