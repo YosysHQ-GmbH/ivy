@@ -1,0 +1,39 @@
+[options]
+top top
+
+[read]
+read -sv example.svi
+
+
+[file example.svi]
+module top;
+
+    wire a = 1;
+
+    wire b = a;
+
+    invariant always_a;
+        a;
+    endinvariant
+
+`ifdef inv_always_a
+    always @(*) `inv_always_a (a);
+`endif
+
+    invariant always_b;
+        b;
+    endinvariant
+
+`ifdef inv_always_b
+    always @(*) `inv_always_b (b);
+`endif
+
+    proof prove_always_a;
+        assert invariant always_a;
+    endproof
+
+    proof prove_always_b;
+        use invariant always_a;
+        assert invariant always_b;
+    endproof
+endmodule
