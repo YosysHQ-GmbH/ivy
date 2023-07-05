@@ -34,7 +34,7 @@ dev = [
 ]
 
 [project.scripts]
-ivy = "yosys_ivy:main"
+ivy = "yosys_ivy.main:main"
 
 [tool.black]
 line-length = 100
