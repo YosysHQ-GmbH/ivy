@@ -134,3 +134,31 @@ super table tagged task use virtual wildcard with within`
 ## Example IVY Project
 
 TBD
+
+## Updated Semantics of statements in proof..endproof blocks
+
+### assert invariant|sequence|property <name>;
+
+Assert the specified properties. If `assume`, `use`, etc is used on this proof, all the properties asserted here will be assumed in that other proof.
+
+### assume invariant|sequence|property <name>;
+
+Assume the specified properties. They must be proven independently.
+
+### assume|extends|use proof <name>;
+
+Assume the properties asserted in the other proof. With `use` we also `disable` everything that the other proof has listed as `implements`.
+Extends `extends` is similar to `use` but also re-exports the assumed properties and disabled entities to every other proof that uses `extends` or
+`use` on the proof that contains the `extends` clause.
+
+### cross assume|use invariant|sequence|property|proof <name>;
+
+Like ordinary `assume` or `use`, but only assume the other properties in the prior, so that two properties can use each other in their induction proofs.
+
+### import proof <name>;
+
+Essentialy copy all statements from the other proof into this proof, using the other proof like a template. A proof that is imported like that into another proof doesn't need to be proven by itself.
+
+## Other changes to SystemVerilog
+
+Add support for `solve proof <name>;` in module-context to specify the "root proofs" to use. The special statement `solve proof automatic;` will assume a `solve proof` statement for all proofs without arguments in the same module.
