@@ -161,4 +161,4 @@ Essentialy copy all statements from the other proof into this proof, using the o
 
 ## Other changes to SystemVerilog
 
-Add support for `solve proof <name>;` in module-context to specify the "root proofs" to use. The special statement `solve proof automatic;` will assume a `solve proof` statement for all proofs without arguments in the same module.
+Add support for `solve proof <name>;` in module-context to specify the "root proofs" to use. The special statement `solve proof automatic;` will assume a `solve proof` statement for all proofs without arguments in the same module, that aren't `use`-ed by any other proof.
