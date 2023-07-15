@@ -137,28 +137,87 @@ TBD
 
 ## Updated Semantics of statements in proof..endproof blocks
 
-### `assert invariant|sequence|property <name>;`
+### Minimal Viable Product
 
-Assert the specified properties. If `assume`, `use`, etc is used on this proof, all the properties asserted here will be assumed in that other proof.
+```
+[automatic] proof <name>;
+    [local] assert invariant <name>;
+    [cross] assume invariant|proof <name>;
+    solve proof <name>;
+    solve with "<solver>";
+endproof
 
-### `assume invariant|sequence|property <name>;`
+solve proof <name>;
+```
+
+### Assert-Assume
+
+#### `[local] assert invariant|sequence|property <name>;`
+
+Assert the specified properties. If the proof suceeds, the properties will be considered proven.
+
+#### `[cross] assume invariant|sequence|property <name>;`
 
 Assume the specified properties. They must be proven independently.
 
-### `assume|extends|use proof <name>;`
+With `cross` the speciefied properties are only assumed in the prior, not the final state. This allows proofs to assume each others asserted properties.
 
-Assume the properties asserted in the other proof. With `use` we also `disable` everything that the other proof has listed as `implements`.
-Extends `extends` is similar to `use` but also re-exports the assumed properties and disabled entities to every other proof that uses `extends` or
-`use` on the proof that contains the `extends` clause.
+#### `[cross] assume proof <name>;`
 
-### `cross assume|use invariant|sequence|property|proof <name>;`
+Assume all properties that are asserted in the specified proof, unless they are asserted with `local`.
 
-Like ordinary `assume` or `use`, but only assume the other properties in the prior, so that two properties can use each other in their induction proofs.
+#### `export [cross] [assert|assume] invariant|sequence|property|proof <name>;`
 
-### `import proof <name>;`
+Export the specified property. Any proof `use`ing this one will assume the specified properties.
 
-Essentialy copy all statements from the other proof into this proof, using the other proof like a template. A proof that is imported like that into another proof doesn't need to be proven by itself.
+(Also `assert`, `assume`, or `cross assume` the specified properties as indicated.)
 
-## Other changes to SystemVerilog
+#### `[export] use proof <name>;`
 
-Add support for `solve proof <name>;` in module-context to specify the "root proofs" to use. The special statement `solve proof automatic;` will assume a `solve proof` statement for all proofs without arguments in the same module, that aren't `use`-ed by any other proof.
+Assume the properties exported in the other proof.
+
+### Proof Management
+
+#### `[automatic] proof ... endproof`
+
+Automatically add the proof to the database, when it has no arguments, or when it's used in any other
+proof with `use` or `assume`. Without `automatic`, the proof is only added to the database when added
+explicitly with `solve proof <name>;`.
+
+#### `solve proof <name>;`
+
+When elaborating this proof, also elaborate the specific proof, and add it to the database.
+
+The `solve proof` statement can also be used in module context to specify the "top-level" proofs.
+
+#### `solve with "<solver-command>";`
+
+When elaborating this proof, also elaborate the specific proof, and add it to the database.
+
+Multiple `solve with` clauses can be specified and a tool is free to pick wichever it supports. A tool should not attempt to solve a proof that has no "solve with" clause it supports.
+
+### Abstractions
+
+#### `[export] disable <entity>;`
+
+Specify a cutpoint.
+
+If specified with `export` then any proof `use`ing this one will inherit the cutpoint.
+
+#### `implents <entity>;`
+
+A cut point that other proofs will inherit but this proof is not using itself.
+
+#### `[export] inside <entity>;`
+
+A way to cutpoint everything except the given entitny. Can be used multiple times and interleaved with `disable` statements.
+
+### Case Management
+
+#### `assert table (<expr>)|{<expr-list>} [not] within {<const-list>};`
+
+Prove that the const list contains all the possible cases (or all impossible cases) for the given expression.
+
+#### `[export] [assume] table (<expr>)|{<expr-list>} [not] within {<const-list>};`
+
+Restrict this proof to a certain case or list of cases. (The consition is only assumed in the last cycle of the witness, i.e. the cycle in which the property fails.) IVY will keep track of the cases and make sure that a property is either proven for all the cases, or is only used in cases with compatible restrictions. (Either `export` or `assume` or both must be present for the statement to be valid.)
