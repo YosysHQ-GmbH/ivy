@@ -282,7 +282,7 @@ module demo_props (
 	endproperty
 
 	invariant upcounter_limit(sig, n);
-		$past(sig) < n ? sig <= n : sig == 0;
+		$past(sig) < n ? $past(sig) < sig && sig <= n : !sig;
 	endinvariant
 
 	invariant upcounter_step(sig, n);
