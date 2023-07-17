@@ -144,10 +144,12 @@ TBD
     [local] assert invariant <name>;
     [cross] assume invariant|proof <name>;
     solve proof <name>;
+    solve invariant|sequence|property <name>;
     solve with "<solver>";
 endproof
 
 solve proof <name>;
+solve invariant|sequence|property <name>;
 ```
 
 ### Assert-Assume
