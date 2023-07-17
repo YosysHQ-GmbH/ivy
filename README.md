@@ -131,10 +131,6 @@ are "use"-ing directly.
 force global local implements implies inside matches priority property pure release solve static
 super table tagged task use virtual wildcard with within`
 
-## Example IVY Project
-
-TBD
-
 ## Updated Semantics of statements in proof..endproof blocks
 
 ### Minimal Viable Product
@@ -238,3 +234,81 @@ Prove that the const list contains at least all the possible cases (or only impo
 #### `[export] [assume] table (<expr>)|{<expr-list>} [not] within {<const-list>};`
 
 Restrict this proof to a certain case or list of cases. (The condition is only assumed in the last cycle of the witness, i.e. the cycle in which the property would fail.) IVY will keep track of the cases and make sure that a property is either proven for all cases, or is only used in cases with compatible restrictions. (Either `export` or `assume` or both must be present for the statement to be valid.)
+
+## Example IVY Project
+
+```
+module demo (
+	input clock,
+	input reset,
+	output A, B, C, D
+);
+	reg [19:0] counter = 0;
+
+	always @(posedge clock) begin
+		if (reset)
+			counter <= 0;
+		else
+			counter <= counter + 20'd 1;
+	end
+
+	assign A = counter == 123456;
+	assign B = counter == 234567;
+	assign C = counter == 345678;
+	assign D = counter == 456789;
+endmodule
+
+module demo_props (
+	input clock, reset,
+	input A, B, C, D
+);
+	default clocking @(posedge clock); endclocking
+	default disable iff (reset);
+
+	property prop_1;
+		A |-> !{B,C,D} [*] ##1 B;
+	endproperty
+
+	property prop_2;
+		B |-> !{A,C,D} [*] ##1 C;
+	endproperty
+
+	property prop_3;
+		C |-> !{A,B,D} [*] ##1 D;
+	endproperty
+
+	property prop_4;
+		D |-> !{A,B,C} [*] ##1 A;
+	endproperty
+
+	invariant upcounter_limit(sig, n);
+		$past(sig) < n ? sig <= n : sig == 0;
+	endinvariant
+
+	invariant upcounter_step(sig, n);
+		$past(sig) < n -> sig <= n;
+	endinvariant
+
+	proof counter_abstraction;
+		implements counter;
+		export assert invariant upcounter_limit(counter, 20'h fffff);
+		export assert invariant upcounter_step(counter, 123456);
+		export assert invariant upcounter_step(counter, 234567);
+		export assert invariant upcounter_step(counter, 345678);
+		export assert invariant upcounter_step(counter, 456789);
+		solve with "sby abc pdr";
+	endproof
+
+	automatic proof counter_props_1234;
+		assert property counter_prop_1;
+		assert property counter_prop_2;
+		assert property counter_prop_3;
+		assert property counter_prop_4;
+		use proof counter_abstraction;
+		solve with "sby abc pdr";
+	endproof
+endmodule
+
+bind demo demo_props demo_props_i (.*);
+```
+
