@@ -158,7 +158,7 @@ Proofs can run in parallel arbitarily, but should be queued for execution approx
 
 Proofs with negative priority should only be attempted after all proofs with positive priority for the same properties have failed. The default priority is zero and proofs with negative priority can run in parallel to proofs with priority zero for the same properties.
 
-Possible `"<solver>"` syntax for SBY: `"sby [options] [engine spec]"`. For example: `"sby --depth 15 smtbmc yices"``
+Possible `"<solver>"` syntax for SBY: `"sby [options] [engine spec]"`. For example: `"sby --depth 15 smtbmc yices"`
 
 ### Assert-Assume
 
