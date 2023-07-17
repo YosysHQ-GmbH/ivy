@@ -140,17 +140,25 @@ TBD
 ### Minimal Viable Product
 
 ```
-[automatic] proof <name>;
-    [local] assert invariant <name>;
-    [cross] assume invariant|proof <name>;
-    solve proof <name>;
-    solve invariant|sequence|property <name>;
-    solve with "<solver>";
+[automatic] proof <name>(...) [priority <int>];
+    [local] assert invariant <name>(...);
+    [cross] assume invariant|proof <name>(...);
+    solve invariant|sequence|property <name>(...);
+    solve proof <name>(...) [with "<solver>"] [priority <int>];
+    solve with "<solver>" [priority <int>];
 endproof
 
-solve proof <name>;
-solve invariant|sequence|property <name>;
+solve invariant|sequence|property <name>(...);
+solve proof <name>(...) [with "<solver>"] [priority <int>];
 ```
+
+A tool like IVY shall ignore all `solve with` statements it can't understand, then pick the one with the highest priority. An implementation-defined mechanism is used to pick a solver when two or more solvers with the same priority remain. (Note that the priority can be an expression using constant proof arguments.) The chosen solver is then queued with it's priority, or the priority specified in the proof header if it has one, or the priority of the calling `solve` statement if that has one. (If different solvers are being added for the same proof via different routes, the one with the higher priority remains, using an implementation-defined method to resolve a tie.)
+
+Proofs can run in parallel arbitarily, but should be queued for execution approximately in order of descending priority. Running proofs should be terminated when all their asserted properties have benn proven independently via other proofs already.
+
+Proofs with negative priority should only be attempted after all proofs with positive priority for the same properties have failed. The default priority is zero and proofs with negative priority can run in parallel to proofs with priority zero for the same properties.
+
+Possible `"<solver>"` syntax for SBY: `"sby [options] [engine spec]". For example: `"sby --depth 15 smtbmc yices"``
 
 ### Assert-Assume
 
