@@ -180,9 +180,9 @@ Assume the properties exported in the other proof.
 
 #### `[automatic] proof ... endproof`
 
-Automatically add the proof to the database, when it has no arguments, or when it's used in any other
-proof with `use` or `assume`. Without `automatic`, the proof is only added to the database when added
-explicitly with `solve proof <name>;`.
+With `automatic` the proof is added to the database automatically, when it has no arguments, or when
+it's used in any other proof with `use` or `assume`. Without `automatic`, the proof is only added to
+the database when added explicitly with `solve proof <name>;`.
 
 #### `solve proof <name>;`
 
@@ -192,9 +192,9 @@ The `solve proof` statement can also be used in module context to specify the "t
 
 #### `solve with "<solver-command>";`
 
-When elaborating this proof, also elaborate the specific proof, and add it to the database.
+Which solver to use to prove the assertions in this proof. Multiple `solve with` clauses can be specified and a tool is free to pick wichever it supports. A tool should not attempt to solve a proof that has no "solve with" clause it supports.
 
-Multiple `solve with` clauses can be specified and a tool is free to pick wichever it supports. A tool should not attempt to solve a proof that has no "solve with" clause it supports.
+A proof that doesn't assert anything doesn't need a `solve with` clause, and all `solve with` clauses provided for such a proof are ignored.
 
 ### Abstractions
 
@@ -210,14 +210,21 @@ A cut point that other proofs will inherit but this proof is not using itself.
 
 #### `[export] inside <entity>;`
 
-A way to cutpoint everything except the given entitny. Can be used multiple times and interleaved with `disable` statements.
+A way to cutpoint everything except the given entitny. Can be used multiple times and mixed with `disable` statements.
+
+If any `inside` clauses are provided, then all cells are removed that are not inside any of the entities listed, or a
+direct prefix of any of the entities. I.e. with `inside top.foo;`, `inside top.bar;` we will keep the top module itself,
+and the hierarchies below `top.foo` and `top.bar`, but remove all other cells in `top`. Wires connecting the remaining
+cells are kept.
+
+Disable statements are executed independent of `inside` clauses.
 
 ### Case Management
 
 #### `assert table (<expr>)|{<expr-list>} [not] within {<const-list>};`
 
-Prove that the const list contains all the possible cases (or all impossible cases) for the given expression.
+Prove that the const list contains at least all the possible cases (or only impossible cases) for the given expression(s).
 
 #### `[export] [assume] table (<expr>)|{<expr-list>} [not] within {<const-list>};`
 
-Restrict this proof to a certain case or list of cases. (The consition is only assumed in the last cycle of the witness, i.e. the cycle in which the property fails.) IVY will keep track of the cases and make sure that a property is either proven for all the cases, or is only used in cases with compatible restrictions. (Either `export` or `assume` or both must be present for the statement to be valid.)
+Restrict this proof to a certain case or list of cases. (The condition is only assumed in the last cycle of the witness, i.e. the cycle in which the property would fail.) IVY will keep track of the cases and make sure that a property is either proven for all cases, or is only used in cases with compatible restrictions. (Either `export` or `assume` or both must be present for the statement to be valid.)
