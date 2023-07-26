@@ -17,19 +17,8 @@ from yosys_mau.source_str import plain_str, report
 from yosys_mau.stable_set import StableSet
 
 from .config import App, arg_parser, parse_config
-from .data import IvyData, IvyInvariant, IvyName, IvyProof
+from .data import IvyData, IvyName, IvyProof, StatusKey
 from .status_db import IvyStatusDb, Status
-
-
-def prefix_name(name: IvyName):
-    if name in App.data.proofs:
-        return f"proof {name}"
-    elif name in App.data.invariants:
-        return f"invariant {name}"
-    else:
-        tl.log_warning(f"Unknown name {name}")
-        return f"{name}"
-
 
 status_colors = {
     "pending": "blue",
@@ -37,6 +26,7 @@ status_colors = {
     "running": "yellow",
     "unknown": "red",
     "error": "red",
+    "unreachable": "red",
     "fail": "red",
     "pass": "green",
 }
@@ -53,7 +43,7 @@ def main() -> None:
 
     # Move command line arguments into the App context
     for name in dir(args):
-        if name in type(App).__annotations__:
+        if name in type(App).__mro__[1].__annotations__:
             setattr(App, name, getattr(args, name))
 
     App.raw_args = args
@@ -177,10 +167,10 @@ def copy_source_files() -> None:
         source_file = ivy_file_dir / plain_str(file)
         dst_file = target_src_dir / path.name
         tl.log(f"Copy '{source_file}' to '{dst_file}'")
-        if os.path.pardir in path.parts or path.parts[-1] == os.path.curdir:
+        if path.parts[-1] in (os.path.pardir, os.path.curdir):
             raise report.InputError(file, "Invalid source file name")
 
-        filename = Path(source_file)
+        filename = Path(path.name)
 
         if filename in filenames:
             raise report.InputError(file, "Duplicate source file name")
@@ -243,32 +233,19 @@ class IvyExportJson(tl.Process):
 
 
 def check_proof_cycles():
-    data = App.data
-    cycles = data.proof_cycles()
+    computed_status = App.data.status_map()
 
-    if cycles:
-        message: list[str] = []
+    # TODO how does this interact with the 'solve' statement in the input?
 
-        for scc in cycles:
-            message.append("The following proofs and invariants have cyclic dependencies:")
+    for entity in App.data.proofs:
+        computed_status.set_status(StatusKey("step", entity.name), "pass")
+    computed_status.iterate()
 
-            for name in scc:
-                item = data[name]
-                if isinstance(item, IvyProof):
-                    message.append(f"  proof {item.name} ({item.src_loc})")
-                    for other_name in item.use_proof & scc:
-                        other = data[other_name]
-                        message.append(f"    uses proof {other.name} ({other.src_loc})")
-                    for other_name in item.use_invariant & scc:
-                        other = data[other_name]
-                        message.append(f"    uses invariant {other.name} ({other.src_loc})")
-                else:
-                    message.append(f"  invariant {item.name} ({item.src_loc})")
-                    for other_name in item.asserted_by & scc:
-                        other = data[other_name]
-                        message.append(f"    asserted by proof {other.name} ({other.src_loc})")
-
-        tl.log_error("\n".join(message))
+    for entity in App.data:
+        if computed_status.status(StatusKey("entity", entity.name)) == "unreachable":
+            # TODO better error message, with cross and multiple proofs, can we do better than
+            # listing everything unreachable?
+            tl.log_error("unreachable")
 
 
 def create_sby_files() -> Collection[IvyName]:
@@ -289,38 +266,32 @@ def create_sby_files() -> Collection[IvyName]:
 
     unprovable = StableSet()
 
-    for name in App.data:
-        item = App.data[name]
-        if isinstance(item, IvyInvariant):
-            if item.asserted_by:
-                continue
-
-            if not App.config.options.auto_proof:
-                unprovable.add(name)
-                continue
-
-        proof_tasks.add(name)
+    for item in App.data.proofs:
+        proof_tasks.add(item.name)
 
         if not create_files:
             continue
 
-        uses = App.data.recursive_uses(name)
+        setup = item.step_setup()
 
         placeholder_defines: list[str] = []
 
-        for use in uses:
-            if use in App.data.proofs:
-                continue
-            macro_name = str(use).replace(".", "__")
-            placeholder_defines.append(f"verific -vlog-define inv_{macro_name}=assume")
-
-        if isinstance(item, IvyInvariant):
-            macro_name = str(name).replace(".", "__")
+        for assert_name in setup.asserts:
+            macro_name = str(assert_name.parts[-1])
             placeholder_defines.append(f"verific -vlog-define inv_{macro_name}=assert")
-        else:
-            for assertion in item.assertions():
-                macro_name = str(assertion).replace(".", "__")
-                placeholder_defines.append(f"verific -vlog-define inv_{macro_name}=assert")
+            placeholder_defines.append(f"verific -vlog-define cross_{macro_name}=")
+
+        for assume_name in setup.assumes:
+            macro_name = str(assume_name.parts[-1])
+            placeholder_defines.append(f"verific -vlog-define inv_{macro_name}=assume")
+            placeholder_defines.append(f"verific -vlog-define cross_{macro_name}=")
+
+        for assume_name in setup.cross_assumes:
+            macro_name = str(assume_name.parts[-1])
+            placeholder_defines.append(f"verific -vlog-define inv_{macro_name}=assume")
+            placeholder_defines.append(
+                f"verific -vlog-define cross_{macro_name}=$initstate || $past"
+            )
 
         sby_path = sby_dir / f"{item.filename}.sby"
 
@@ -330,6 +301,8 @@ def create_sby_files() -> Collection[IvyName]:
                 # running in {sby_dir}
                 [options]
                 mode prove
+                depth 2
+
                 [engines]
                 {engines}
                 [script]
@@ -401,6 +374,8 @@ def run_command(all_proof_tasks: Collection[IvyName]) -> None:
                 tl.log(f"Scheduling proof task {str(name)!r}")
 
                 proof_task = IvyProofTask(name)
+                # TODO proof_task[tl.priority.JobPriorities].priority = ...
+                # TODO priority sign sentinel task
                 proof_task.handle_error(proof_task_error_handler)
                 status_task.depends_on(proof_task)
 
@@ -423,7 +398,8 @@ class IvyProofTask(tl.Process):
         self[tl.LogContext].scope = str(name)
 
     def on_cancel(self):
-        tl.log_warning("Cancelled")
+        if self.parent and not self.parent.is_aborted:
+            tl.log_warning("Cancelled")
         super().on_cancel()
 
     async def on_run(self) -> None:
@@ -431,6 +407,7 @@ class IvyProofTask(tl.Process):
         await super().on_run()
 
     def on_exit(self, returncode: int) -> None:
+        print("on_exit_called")
         sby_dir = App.work_dir / "tasks" / self.filename
         try:
             sby_status = (sby_dir / "status").read_text()
@@ -503,45 +480,16 @@ def run_status_task():
 
     full_status = App.status_db.full_status()
 
-    dep_status: dict[IvyName, Status] = {}
+    computed_status = App.data.status_map()
 
-    for name in App.data.topological_order():
-        item = App.data[name]
-        incoming: list[Status] = []
+    for name, status in full_status.items():
+        computed_status.set_status(StatusKey("step", name), status)
 
-        if name in full_status:
-            incoming.append(full_status[name])
+    computed_status.iterate()
 
-        for edge in item.edges():
-            incoming.append(dep_status[edge])
-
-        if not incoming:
-            dep_status[name] = "unknown"
-            continue
-
-        priority = ["error", "fail", "unknown", "running", "scheduled", "pending", "pass"]
-
-        for status in priority:
-            if status in incoming:
-                dep_status[name] = status
-                break
-
-    for name in App.proof_tasks:
-        dep = dep_status[name]
-        step = full_status[name]
-        src_loc = App.data[name].src_loc
-
-        tl.log(f"  {prefix_name(name)}: {color_status(dep)} ({src_loc})")
-        for edge in App.data[name].edges():
-            src_loc = App.data[edge].src_loc
-            tl.log(f"    use {prefix_name(edge)}: {color_status(dep_status[edge])} ({src_loc})")
-
-        if name in App.data.proofs:
-            tl.log(f"    proof step: {color_status(step)}")
-
-            for edge in App.data[name].assertions():
-                src_loc = App.data[edge].src_loc
-                tl.log(
-                    f"    assert {prefix_name(edge)}: "
-                    f"{color_status(dep_status[edge])} ({src_loc})"
-                )
+    # TODO produce a nicer status output again
+    for entity in App.data:
+        status = computed_status.status(
+            StatusKey("proof" if isinstance(entity, IvyProof) else "entity", entity.name)
+        )
+        tl.log(f"  {entity.prefixed_name}: {color_status(status)}")

@@ -11,7 +11,7 @@ module top(input a);
         a;
     endinvariant
 
-    proof prove_always_a;
+    automatic proof prove_always_a;
         assert invariant always_a;
     endproof
 endmodule

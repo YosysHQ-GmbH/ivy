@@ -4,13 +4,11 @@ import json
 import sqlite3
 from functools import wraps
 from pathlib import Path
-from typing import Any, Callable, Collection, Container, Literal
+from typing import Any, Callable, Collection, Container
 
 from yosys_mau import task_loop as tl
 
-from .data import IvyName
-
-Status = Literal["pending", "scheduled", "running", "pass", "fail", "error", "unknown"]
+from .data import IvyName, Status
 
 
 def _transaction(method: Callable[..., Any]) -> Callable[..., Any]:
@@ -50,6 +48,7 @@ class IvyStatusDb:
         self.db = sqlite3.connect(path, isolation_level=None)
         self.db.row_factory = sqlite3.Row
         self.db.execute("PRAGMA journal_mode=WAL")
+        self.db.execute("PRAGMA synchronous=0")
 
         if setup:
             self._setup()

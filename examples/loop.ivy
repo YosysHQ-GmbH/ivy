@@ -15,13 +15,13 @@ module top(input a);
         a;
     endinvariant
 
-    proof prove_always_a;
-        use invariant a_always;
+    automatic proof prove_always_a;
+        cross assume invariant a_always;
         assert invariant always_a;
     endproof
 
-    proof prove_a_always;
-        use invariant always_a;
+    automatic proof prove_a_always;
+        cross assume invariant always_a;
         assert invariant a_always;
     endproof
 

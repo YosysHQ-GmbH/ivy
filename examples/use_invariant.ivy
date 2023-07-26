@@ -28,12 +28,12 @@ module top;
     always @(*) `inv_always_b (b);
 `endif
 
-    proof prove_always_a;
+    automatic proof prove_always_a;
         assert invariant always_a;
     endproof
 
-    proof prove_always_b;
-        use invariant always_a;
+    automatic proof prove_always_b;
+        assume invariant always_a;
         assert invariant always_b;
     endproof
 endmodule
