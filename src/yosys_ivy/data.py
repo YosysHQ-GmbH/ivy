@@ -1,14 +1,17 @@
 from __future__ import annotations
 
 import abc
+import heapq
 import json
 import re
-from collections import defaultdict, deque
+from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import Any, Iterator, Literal, NamedTuple
 
 import yosys_mau.task_loop as tl
 from yosys_mau.stable_set import StableSet
+
+from yosys_ivy.sccs import find_sccs
 
 Status = Literal[
     "pending", "scheduled", "running", "pass", "fail", "error", "unknown", "unreachable"
@@ -66,6 +69,11 @@ class IvyName:
     @property
     def module_names(self) -> tuple[str, ...]:
         return self.parts[::2]
+
+    @property
+    def rtlil(self) -> str:
+        """RTLIL name after uniquification"""
+        return ".".join([self.parts[0], *self.parts[1:-1:2]]) + f"/{self.parts[-1]}"
 
     def __str__(self) -> str:
         str_parts: list[str] = []
@@ -227,10 +235,6 @@ class IvyProof(IvyEntity):
     asserts: StableSet[IvyAssert]
     exports: StableSet[IvyExport]
 
-    # exports: list[tuple[IvyName]]
-    # use_invariant: StableSet[IvyName]
-    # assert_invariant: StableSet[IvyName]
-
     def __init__(self, ivy_data: IvyData, json_data: Any):
         super().__init__(ivy_data, json_data)
 
@@ -248,13 +252,12 @@ class IvyProof(IvyEntity):
 
         for assume_json in self.json_data.get("assume", []):
             IvyAssume(self, assume_json)
-            if assume_json.get("export", False):  # TODO temporary, replace when JSON is updated
-                IvyExport(self, assume_json)
 
         for assert_json in self.json_data.get("assert", []):
             IvyAssert(self, assert_json)
-            if assert_json.get("export", False):  # TODO temporary, replace when JSON is updated
-                IvyExport(self, assert_json)
+
+        for export_json in self.json_data.get("export", []):
+            IvyExport(self, export_json)
 
         ivy_data.proofs.append(self)
 
@@ -380,6 +383,15 @@ class IvyData:
     status_out_edges: dict[StatusKey, StableSet[StatusEdge]]
     status_in_edges: dict[StatusKey, StableSet[StatusEdge]]
 
+    status_out_edges_list: list[list[int]]
+    status_in_edges_list: list[list[int]]
+
+    status_order: dict[StatusKey, int]
+    status_order_list: list[StatusKey]
+
+    status_cross_order_map: list[int | None]
+    status_cross_indices: list[int]
+
     status_non_entity_sources: StableSet[StatusKey]
 
     def __init__(self, json_data: Any):
@@ -408,11 +420,42 @@ class IvyData:
                 self.status_in_edges[edge.target].add(edge)
 
                 self.status_in_edges[edge.source]  # create set if it doesn't exist
+                self.status_out_edges[edge.target]  # create set if it doesn't exist
 
         self.status_non_entity_sources = StableSet()
         for key, in_edges in self.status_in_edges.items():
-            if key.type != "entity" and not in_edges:
+            if key.type not in ("entity", "step") and not in_edges:
                 self.status_non_entity_sources.add(key)
+
+        self.status_order = {}
+        self.status_order_list = []
+        for scc in find_sccs(
+            {key: [edge.source for edge in edges] for key, edges in self.status_in_edges.items()}
+        ):
+            if len(scc) > 1:
+                tl.log_debug(f"found scc {len(scc)}")
+            for key in scc:
+                self.status_order[key] = len(self.status_order)
+                self.status_order_list.append(key)
+
+        self.status_cross_order_map = [
+            self.status_order.get(StatusKey("cross", key.name)) if key.type == "entity" else None
+            for key in self.status_order_list
+        ]
+
+        self.status_cross_indices = [
+            i for i, key in enumerate(self.status_order_list) if key.type == "cross"
+        ]
+
+        self.status_out_edges_list = [
+            sorted([self.status_order[edge.target] for edge in self.status_out_edges[source]])
+            for source in self.status_order_list
+        ]
+
+        self.status_in_edges_list = [
+            sorted([self.status_order[edge.source] for edge in self.status_in_edges[target]])
+            for target in self.status_order_list
+        ]
 
     def uniquify(self, name: str) -> str:
         if name not in self.filenames:
@@ -458,65 +501,85 @@ class IvyData:
 
 class IvyStatusMap:
     data: IvyData
-    current_status: dict[StatusKey, Status]
+    current_status: list[Status]
 
-    dirty: StableSet[StatusKey]
-    dirty_queue: deque[StatusKey]
+    dirty: list[bool]
+    dirty_queue: list[int]
 
-    cross_dirty: StableSet[IvyName]
+    # cross_dirty: StableSet[IvyName]
+    cross_dirty: list[int]
+    cross_dirty_list: list[int]
 
     def __init__(self, data: IvyData):
         self.data = data
-        self.current_status = dict()
 
-        self.dirty_queue = deque()
-        self.dirty = StableSet()
+        self.current_status = ["unreachable"] * len(data.status_order)
 
-        self.cross_dirty = StableSet()
+        self.dirty_queue = []
+        self.dirty = [False] * len(self.current_status)
+
+        self.cross_dirty = [False] * len(self.current_status)
+        self.cross_dirty_map = [None] * len(self.current_status)
+
+        self.cross_dirty_list = []
 
         for key in data.status_non_entity_sources:
             self.set_status(key, "pass")
 
     def status(self, key: StatusKey) -> Status:
-        return self.current_status.get(
-            key,
-            "pass" if key.type == "cross" else "unreachable",
-        )
+        return self._status(self.data.status_order[key])
+
+    def _status(self, index: int) -> Status:
+        return self.current_status[index]
+
+    def _push_dirty(self, index: int):
+        self.dirty[index] = True
+        heapq.heappush(self.dirty_queue, index)
+
+    def _pop_dirty(self) -> int:
+        return heapq.heappop(self.dirty_queue)
 
     def set_status(self, key: StatusKey, status: Status):
-        if self.status(key) == status:
+        index = self.data.status_order[key]
+        self._set_status(index, status)
+
+    def _set_status(self, index: int, status: Status):
+        if self._status(index) == status:
             return
 
-        if key.type == "entity" and key.name not in self.cross_dirty:
-            self.cross_dirty.add(key.name)
+        cross = self.data.status_cross_order_map[index]
+        if cross is not None and not self.cross_dirty[index]:
+            self.cross_dirty[index] = True
+            self.cross_dirty_list.append(index)
 
-        self.current_status[key] = status
-        for out_edge in self.data.status_out_edges[key]:
-            if out_edge.target in self.dirty:
-                continue
-            self.dirty.add(out_edge.target)
-            self.dirty_queue.append(out_edge.target)
+        self.current_status[index] = status
+        for out_edge in self.data.status_out_edges_list[index]:
+            if not self.dirty[out_edge]:
+                self._push_dirty(out_edge)
 
     def iterate(self):
         import time
 
         start = time.time()
-        while self.dirty or self.cross_dirty:
+        while self.dirty_queue or self.cross_dirty_list:
             steps = 0
             while self.dirty_queue:
                 steps += 1
-                key = self.dirty_queue.popleft()
-                assert key not in ("cross", "step")
-                self.dirty.remove(key)
+                index = self._pop_dirty()
+                key = self.data.status_order_list[index]
+                self.dirty[index] = False
 
                 combine_status = status_or if key.type == "entity" else status_and
                 status = combine_status(
-                    *(self.status(edge.source) for edge in self.data.status_in_edges[key])
+                    *(self._status(edge) for edge in self.data.status_in_edges_list[index])
                 )
-                self.set_status(key, status)
-            tl.log_warning(f"iteration took {steps} steps")
+                self._set_status(index, status)
+            tl.log_debug(f"iteration took {steps} steps")
 
-            for name in self.cross_dirty:
-                self.set_status(StatusKey("cross", name), self.status(StatusKey("entity", name)))
-            self.cross_dirty.clear()
-        tl.log_warning("took", time.time() - start, "seconds")
+            for index in self.cross_dirty_list:
+                self.cross_dirty[index] = False
+                cross = self.data.status_cross_order_map[index]
+                assert cross is not None
+                self._set_status(cross, self._status(index))
+            self.cross_dirty_list = []
+        tl.log_debug("took", time.time() - start, "seconds")

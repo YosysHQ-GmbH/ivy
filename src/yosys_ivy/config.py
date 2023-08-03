@@ -111,7 +111,6 @@ class App:
 
 class IvyOptions(cfg.ConfigOptions):
     top = cfg.Option(cfg.StrValue(allow_empty=False))
-    auto_proof = cfg.Option(cfg.BoolValue(), default=True)
 
 
 class IvyConfig(cfg.ConfigParser):

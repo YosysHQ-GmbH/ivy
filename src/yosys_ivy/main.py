@@ -138,6 +138,8 @@ def setup_workdir(early_log: io.StringIO, setup: bool = False) -> None:
         if App.command != "status":
             target = (work_dir / "logfile.txt").open("x")
 
+        (work_dir / "model").mkdir()
+
     if target:
         target.write(early_log.getvalue())
         tl.logging.start_logging(target)
@@ -207,11 +209,18 @@ class IvyExportJson(tl.Process):
 
     async def on_prepare(self) -> None:
         tl.LogContext.scope = self.name
+
         script = dedent(
             f"""\
                 # running in {self.cwd}
                 {App.config.read}
                 verific -ivy-json-export ../ivy_export.json -top {App.config.options.top}
+                verific -assert-all-invariants
+                verific -delete-all-proofs
+                verific -import {App.config.options.top}
+                hierarchy -top {App.config.options.top}
+                {App.config.script}
+                write_rtlil ../model/export.il
             """
         )
         (App.work_dir / "ivy_export.ys").write_text(script)
@@ -232,6 +241,39 @@ class IvyExportJson(tl.Process):
             self.data = IvyData(json.load(f))
 
 
+class IvyPrepareDesign(tl.Process):
+    def __init__(self):
+        # TODO use common infrastructure for overwriting executable paths
+        super().__init__(["yosys", "-ql", "design.log", "design.ys"], cwd=App.work_dir / "model")
+        self.name = "design"
+        self.log_output()  # TODO use something that highlights errors/warnings
+
+    async def on_prepare(self) -> None:
+        tl.LogContext.scope = self.name
+
+        # TODO for future features running the user script to prepare the design just once may not
+        # be sufficient, but we should minimize the number of times we run it and still group
+        # running it for compatible proof tasks. It would also be possible to reuse the SBY prep
+        # step across multiple proof tasks when they share the same solver configuration.
+
+        script = dedent(
+            f"""\
+                # running in {self.cwd}
+                read_rtlil export.il
+                {App.config.script}
+                write_rtlil design.il
+            """
+        )
+        (App.work_dir / "model" / "design.ys").write_text(script)
+
+    async def on_run(self) -> None:
+        if (App.work_dir / "model" / "design.il").exists():
+            tl.log_debug("Reusing existing 'design.il'")
+            self.on_exit(0)
+            return
+        await super().on_run()
+
+
 def check_proof_cycles():
     computed_status = App.data.status_map()
 
@@ -241,11 +283,17 @@ def check_proof_cycles():
         computed_status.set_status(StatusKey("step", entity.name), "pass")
     computed_status.iterate()
 
+    # TODO determine which things should be reachable
     for entity in App.data:
-        if computed_status.status(StatusKey("entity", entity.name)) == "unreachable":
+        if (
+            computed_status.status(
+                StatusKey("entity" if entity.type != "proof" else "proof", entity.name)
+            )
+            == "unreachable"
+        ):
             # TODO better error message, with cross and multiple proofs, can we do better than
             # listing everything unreachable?
-            tl.log_error("unreachable")
+            tl.log_warning(f"unreachable {entity.type} {entity.name}")
 
 
 def create_sby_files() -> Collection[IvyName]:
@@ -258,13 +306,10 @@ def create_sby_files() -> Collection[IvyName]:
     except FileExistsError:
         create_files = False
 
-    relative = Path(os.path.pardir) / "src"
-
-    files = "\n".join(str(relative / name) for name in App.filenames)
+    if create_files:
+        tl.log("Creating proof tasks")
 
     proof_tasks = StableSet()
-
-    unprovable = StableSet()
 
     for item in App.data.proofs:
         proof_tasks.add(item.name)
@@ -274,24 +319,17 @@ def create_sby_files() -> Collection[IvyName]:
 
         setup = item.step_setup()
 
-        placeholder_defines: list[str] = []
+        attributes: dict[str, StableSet[IvyName]] = {}
 
-        for assert_name in setup.asserts:
-            macro_name = str(assert_name.parts[-1])
-            placeholder_defines.append(f"verific -vlog-define inv_{macro_name}=assert")
-            placeholder_defines.append(f"verific -vlog-define cross_{macro_name}=")
+        attributes["ivy_assert"] = setup.asserts
+        attributes["ivy_assume"] = setup.assumes
+        attributes["ivy_cross_assume"] = setup.cross_assumes
 
-        for assume_name in setup.assumes:
-            macro_name = str(assume_name.parts[-1])
-            placeholder_defines.append(f"verific -vlog-define inv_{macro_name}=assume")
-            placeholder_defines.append(f"verific -vlog-define cross_{macro_name}=")
-
-        for assume_name in setup.cross_assumes:
-            macro_name = str(assume_name.parts[-1])
-            placeholder_defines.append(f"verific -vlog-define inv_{macro_name}=assume")
-            placeholder_defines.append(
-                f"verific -vlog-define cross_{macro_name}=$initstate || $past"
-            )
+        setattrs = "\n".join(
+            f"setattr -set {attr} 1 {' '.join(name.rtlil for name in names)}"
+            for attr, names in attributes.items()
+            if names
+        )
 
         sby_path = sby_dir / f"{item.filename}.sby"
 
@@ -301,39 +339,29 @@ def create_sby_files() -> Collection[IvyName]:
                 # running in {sby_dir}
                 [options]
                 mode prove
-                depth 2
+                depth 20
+                assume_early off
 
                 [engines]
                 {engines}
                 [script]
-                {placeholder_defines}
-                {read}
-                verific -delete-all-proofs
-                verific -delete-all-invariants
-
-                hierarchy -top {top}
-                {script}
-                [files]
-                {files}
+                read_rtlil ../../../model/design.il
+                uniquify; hierarchy -nokeep_asserts
+                {setattrs}
+                select -set used */a:ivy_assert */a:ivy_assume */a:ivy_cross_assume
+                chformal -remove */a:ivy_property @used %d
+                chformal -assert2assume */a:ivy_assume */a:ivy_cross_assume
+                chformal -delay 1 */a:ivy_cross_assume
                 """
             ).format(
-                placeholder_defines="\n".join(placeholder_defines),
                 sby_dir=sby_dir,
                 engines=App.config.engines,
                 read=App.config.read,
-                files=files,
                 top=App.config.options.top,
-                script=App.config.script,
+                setattrs=setattrs,
             )
         )
         tl.log_debug(f"wrote sby file {str(sby_path)!r}")
-
-    if unprovable:
-        message = "\n".join(f"  {name} ({App.data[name].src_loc})" for name in unprovable)
-        tl.log_error(
-            f"Invariants without proof:\n{message}\n"
-            "Use option 'auto_proof on' to add implicit proofs for these invariants."
-        )
 
     return proof_tasks
 
@@ -364,16 +392,30 @@ def run_command(all_proof_tasks: Collection[IvyName]) -> None:
 
     tl.current_task().sync_handle_events(ProofStatusEvent, proof_event_handler)
 
+    prepare_design = None
+
     if App.command in ("run", "prove"):
-        for name in App.proof_tasks:
-            if status := App.status_db.change_status(name, "scheduled", require=("pending",)):
+        tasks = App.proof_tasks
+        large_task_count = len(tasks) > 10
+
+        if large_task_count:
+            tl.log(f"Scheduling {len(tasks)} proof tasks")
+
+        non_pending = App.status_db.change_status_many(tasks, "scheduled", require=("pending",))
+
+        for name in tasks:
+            if status := non_pending.get(name, None):
                 if App.proof_args:
                     # don't warn without an explicit selection of proofs
                     tl.log_warning(f"Status of proof {str(name)!r} is {status!r}, skipping")
             else:
-                tl.log(f"Scheduling proof task {str(name)!r}")
+                if not large_task_count:
+                    tl.log(f"Scheduling proof task {str(name)!r}")
 
                 proof_task = IvyProofTask(name)
+                if prepare_design is None:
+                    prepare_design = IvyPrepareDesign()
+                proof_task.depends_on(prepare_design)
                 # TODO proof_task[tl.priority.JobPriorities].priority = ...
                 # TODO priority sign sentinel task
                 proof_task.handle_error(proof_task_error_handler)
@@ -438,15 +480,15 @@ class IvyProofTask(tl.Process):
 
 def proof_task_error_handler(err: BaseException):
     if isinstance(err, tl.TaskFailed) and isinstance(err.task, IvyProofTask):
-        App.status_db.change_status(
-            err.task.proof_name, "unknown", require=("running", "scheduled")
-        )
+        App.status_db.change_status(err.task.proof_name, "error", require=("running", "scheduled"))
         tl.log_exception(err, raise_error=False)
+        # TODO check whether we can de-schedule/abort any proof tasks with this status change
         return
     if isinstance(err, tl.TaskCancelled) and isinstance(err.task, IvyProofTask):
         App.status_db.change_status(
             err.task.proof_name, "pending", require=("running", "scheduled")
         )
+        # TODO check whether we can de-schedule/abort any proof tasks with this status change
         return
     if isinstance(err, tl.TaskCancelled):
         return
@@ -468,6 +510,7 @@ def proof_event_handler(event: ProofStatusEvent):
             failure,
             raise_error=False,
         )
+    # TODO check whether we can de-schedule/abort any proof tasks with this status change
 
 
 def run_status_task():
@@ -483,13 +526,21 @@ def run_status_task():
     computed_status = App.data.status_map()
 
     for name, status in full_status.items():
+        tl.log_debug("step status", name, status)
         computed_status.set_status(StatusKey("step", name), status)
 
     computed_status.iterate()
 
     # TODO produce a nicer status output again
     for entity in App.data:
-        status = computed_status.status(
-            StatusKey("proof" if isinstance(entity, IvyProof) else "entity", entity.name)
-        )
-        tl.log(f"  {entity.prefixed_name}: {color_status(status)}")
+        if isinstance(entity, IvyProof):
+            step = computed_status.status(StatusKey("step", entity.name))
+            status = computed_status.status(StatusKey("proof", entity.name))
+            if step != status:
+                tl.log(
+                    f"  {entity.prefixed_name}: {color_status(status)} (step {color_status(step)})"
+                )
+            tl.log(f"  {entity.prefixed_name}: {color_status(status)}")
+        else:
+            status = computed_status.status(StatusKey("entity", entity.name))
+            tl.log(f"  {entity.prefixed_name}: {color_status(status)}")

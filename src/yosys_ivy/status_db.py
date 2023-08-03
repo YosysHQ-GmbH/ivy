@@ -4,7 +4,7 @@ import json
 import sqlite3
 from functools import wraps
 from pathlib import Path
-from typing import Any, Callable, Collection, Container
+from typing import Any, Callable, Collection, Container, Iterable
 
 from yosys_mau import task_loop as tl
 
@@ -86,17 +86,27 @@ class IvyStatusDb:
             [(name.db_key,) for name in names],
         )
 
-    @_transaction
     def change_status(
         self, name: IvyName, new_status: Status, require: Container[Status] | None = None
     ) -> Status | None:
-        old_status = self.db.execute(
-            """SELECT status FROM proof_status WHERE name = ?""", (name.db_key,)
-        ).fetchone()[0]
-        if require is not None and old_status not in require:
-            return old_status
+        return self.change_status_many([name], new_status, require).get(name, None)
 
-        self.db.execute(
-            """UPDATE proof_status SET status = :status WHERE name = :name""",
-            dict(name=name.db_key, status=new_status),
-        )
+    @_transaction
+    def change_status_many(
+        self, names: Iterable[IvyName], new_status: Status, require: Container[Status] | None = None
+    ) -> dict[IvyName, Status]:
+        results: dict[IvyName, Status] = {}
+        for name in names:
+            old_status = self.db.execute(
+                """SELECT status FROM proof_status WHERE name = ?""", (name.db_key,)
+            ).fetchone()[0]
+
+            if require is not None and old_status not in require:
+                results[name] = old_status
+
+            self.db.execute(
+                """UPDATE proof_status SET status = :status WHERE name = :name""",
+                dict(name=name.db_key, status=new_status),
+            )
+
+        return results
