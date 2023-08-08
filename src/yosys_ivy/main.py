@@ -449,7 +449,6 @@ class IvyProofTask(tl.Process):
         await super().on_run()
 
     def on_exit(self, returncode: int) -> None:
-        print("on_exit_called")
         sby_dir = App.work_dir / "tasks" / self.filename
         try:
             sby_status = (sby_dir / "status").read_text()

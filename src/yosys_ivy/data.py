@@ -380,19 +380,7 @@ class IvyData:
 
     filenames: set[str] = field(repr=False)
 
-    status_out_edges: dict[StatusKey, StableSet[StatusEdge]]
-    status_in_edges: dict[StatusKey, StableSet[StatusEdge]]
-
-    status_out_edges_list: list[list[int]]
-    status_in_edges_list: list[list[int]]
-
-    status_order: dict[StatusKey, int]
-    status_order_list: list[StatusKey]
-
-    status_cross_order_map: list[int | None]
-    status_cross_indices: list[int]
-
-    status_non_entity_sources: StableSet[StatusKey]
+    status_graph: IvyStatusGraph = field(repr=False)
 
     def __init__(self, json_data: Any):
         self.json_data = json_data
@@ -412,50 +400,8 @@ class IvyData:
         # TODO add all referenced sequences and properties so we can list them and store associated
         # data
 
-        self.status_out_edges = defaultdict(StableSet)
-        self.status_in_edges = defaultdict(StableSet)
-        for entity in self:
-            for edge in entity.edges():
-                self.status_out_edges[edge.source].add(edge)
-                self.status_in_edges[edge.target].add(edge)
+        self.status_graph = IvyStatusGraph(self)
 
-                self.status_in_edges[edge.source]  # create set if it doesn't exist
-                self.status_out_edges[edge.target]  # create set if it doesn't exist
-
-        self.status_non_entity_sources = StableSet()
-        for key, in_edges in self.status_in_edges.items():
-            if key.type not in ("entity", "step") and not in_edges:
-                self.status_non_entity_sources.add(key)
-
-        self.status_order = {}
-        self.status_order_list = []
-        for scc in find_sccs(
-            {key: [edge.source for edge in edges] for key, edges in self.status_in_edges.items()}
-        ):
-            if len(scc) > 1:
-                tl.log_debug(f"found scc {len(scc)}")
-            for key in scc:
-                self.status_order[key] = len(self.status_order)
-                self.status_order_list.append(key)
-
-        self.status_cross_order_map = [
-            self.status_order.get(StatusKey("cross", key.name)) if key.type == "entity" else None
-            for key in self.status_order_list
-        ]
-
-        self.status_cross_indices = [
-            i for i, key in enumerate(self.status_order_list) if key.type == "cross"
-        ]
-
-        self.status_out_edges_list = [
-            sorted([self.status_order[edge.target] for edge in self.status_out_edges[source]])
-            for source in self.status_order_list
-        ]
-
-        self.status_in_edges_list = [
-            sorted([self.status_order[edge.source] for edge in self.status_in_edges[target]])
-            for target in self.status_order_list
-        ]
 
     def uniquify(self, name: str) -> str:
         if name not in self.filenames:
@@ -499,21 +445,87 @@ class IvyData:
         return IvyStatusMap(self)
 
 
+class IvyStatusGraph:
+    # We map StatusKey to ints that are topologically ordered (across SCCs) as that makes the inner
+    # loop quite a bit faster (due to improved visting order and cheaper operations).
+
+    out_edges: dict[StatusKey, StableSet[StatusEdge]]
+    in_edges: dict[StatusKey, StableSet[StatusEdge]]
+
+    out_edges_list: list[list[int]]
+    in_edges_list: list[list[int]]
+
+    order: dict[StatusKey, int]
+    order_list: list[StatusKey]
+
+    cross_order_map: list[int | None]
+    cross_indices: list[int]
+
+    non_entity_sources: StableSet[StatusKey]
+
+    def __init__(self, data: IvyData):
+
+        self.out_edges = defaultdict(StableSet)
+        self.in_edges = defaultdict(StableSet)
+        for entity in data:
+            for edge in entity.edges():
+                self.out_edges[edge.source].add(edge)
+                self.in_edges[edge.target].add(edge)
+
+                self.in_edges[edge.source]  # create set if it doesn't exist
+                self.out_edges[edge.target]  # create set if it doesn't exist
+
+        self.non_entity_sources = StableSet()
+        for key, in_edges in self.in_edges.items():
+            if key.type not in ("entity", "step") and not in_edges:
+                self.non_entity_sources.add(key)
+
+        self.order = {}
+        self.order_list = []
+        for scc in find_sccs(
+            {key: [edge.source for edge in edges] for key, edges in self.in_edges.items()}
+        ):
+            if len(scc) > 1:
+                tl.log_debug(f"found scc {len(scc)}")
+            for key in scc:
+                self.order[key] = len(self.order)
+                self.order_list.append(key)
+
+        self.cross_order_map = [
+            self.order.get(StatusKey("cross", key.name)) if key.type == "entity" else None
+            for key in self.order_list
+        ]
+
+        self.cross_indices = [
+            i for i, key in enumerate(self.order_list) if key.type == "cross"
+        ]
+
+        self.out_edges_list = [
+            sorted([self.order[edge.target] for edge in self.out_edges[source]])
+            for source in self.order_list
+        ]
+
+        self.in_edges_list = [
+            sorted([self.order[edge.source] for edge in self.in_edges[target]])
+            for target in self.order_list
+        ]
+
+
 class IvyStatusMap:
-    data: IvyData
+    status_graph: IvyStatusGraph
+
     current_status: list[Status]
 
     dirty: list[bool]
     dirty_queue: list[int]
 
-    # cross_dirty: StableSet[IvyName]
     cross_dirty: list[int]
     cross_dirty_list: list[int]
 
     def __init__(self, data: IvyData):
-        self.data = data
+        self.status_graph = data.status_graph
 
-        self.current_status = ["unreachable"] * len(data.status_order)
+        self.current_status = ["unreachable"] * len(self.status_graph.order)
 
         self.dirty_queue = []
         self.dirty = [False] * len(self.current_status)
@@ -523,11 +535,11 @@ class IvyStatusMap:
 
         self.cross_dirty_list = []
 
-        for key in data.status_non_entity_sources:
+        for key in self.status_graph.non_entity_sources:
             self.set_status(key, "pass")
 
     def status(self, key: StatusKey) -> Status:
-        return self._status(self.data.status_order[key])
+        return self._status(self.status_graph.order[key])
 
     def _status(self, index: int) -> Status:
         return self.current_status[index]
@@ -540,20 +552,20 @@ class IvyStatusMap:
         return heapq.heappop(self.dirty_queue)
 
     def set_status(self, key: StatusKey, status: Status):
-        index = self.data.status_order[key]
+        index = self.status_graph.order[key]
         self._set_status(index, status)
 
     def _set_status(self, index: int, status: Status):
         if self._status(index) == status:
             return
 
-        cross = self.data.status_cross_order_map[index]
+        cross = self.status_graph.cross_order_map[index]
         if cross is not None and not self.cross_dirty[index]:
             self.cross_dirty[index] = True
             self.cross_dirty_list.append(index)
 
         self.current_status[index] = status
-        for out_edge in self.data.status_out_edges_list[index]:
+        for out_edge in self.status_graph.out_edges_list[index]:
             if not self.dirty[out_edge]:
                 self._push_dirty(out_edge)
 
@@ -566,19 +578,19 @@ class IvyStatusMap:
             while self.dirty_queue:
                 steps += 1
                 index = self._pop_dirty()
-                key = self.data.status_order_list[index]
+                key = self.status_graph.order_list[index]
                 self.dirty[index] = False
 
                 combine_status = status_or if key.type == "entity" else status_and
                 status = combine_status(
-                    *(self._status(edge) for edge in self.data.status_in_edges_list[index])
+                    *(self._status(edge) for edge in self.status_graph.in_edges_list[index])
                 )
                 self._set_status(index, status)
             tl.log_debug(f"iteration took {steps} steps")
 
             for index in self.cross_dirty_list:
                 self.cross_dirty[index] = False
-                cross = self.data.status_cross_order_map[index]
+                cross = self.status_graph.cross_order_map[index]
                 assert cross is not None
                 self._set_status(cross, self._status(index))
             self.cross_dirty_list = []
