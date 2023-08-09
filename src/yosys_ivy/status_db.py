@@ -2,16 +2,19 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from collections import defaultdict
 from functools import wraps
 from pathlib import Path
-from typing import Any, Callable, Collection, Container, Iterable
+from typing import Any, Callable, Collection, Container, Iterable, TypeVar
 
 from yosys_mau import task_loop as tl
 
-from .data import IvyName, Status
+from .data import IvyName, IvyTaskName, Status, status_or
+
+Fn = TypeVar("Fn", bound=Callable[..., Any])
 
 
-def _transaction(method: Callable[..., Any]) -> Callable[..., Any]:
+def _transaction(method: Fn) -> Fn:
     @wraps(method)
     def wrapper(self: IvyStatusDb, *args: Any, **kwargs: Any) -> Any:
         try:
@@ -40,7 +43,7 @@ def _transaction(method: Callable[..., Any]) -> Callable[..., Any]:
             self.db.rollback()
             raise
 
-    return wrapper
+    return wrapper  # type: ignore
 
 
 class IvyStatusDb:
@@ -58,55 +61,82 @@ class IvyStatusDb:
         self.db.execute(
             """
                 CREATE TABLE proof_status (
-                    name TEXT PRIMARY KEY,
-                    status TEXT NOT NULL
+                    name TEXT,
+                    solver TEXT,
+                    status TEXT NOT NULL,
+                    PRIMARY KEY (name, solver)
                 );
             """
         )
 
     @_transaction
-    def full_status(self) -> dict[IvyName, Status]:
-        cursor = self.db.execute("""SELECT name, status FROM proof_status""")
-        return {IvyName.from_db_key(name): status for name, status in cursor}
+    def full_status(self) -> dict[IvyTaskName, Status]:
+        cursor = self.db.execute("""SELECT name, solver, status FROM proof_status""")
+        return {
+            IvyTaskName(IvyName.from_db_key(name), solver): status
+            for name, solver, status in cursor
+        }
+
+    def reduced_status(self) -> dict[IvyName, Status]:
+        full = self.full_status()
+        grouped: defaultdict[IvyName, list[Status]] = defaultdict(list)
+        for task_name, status in full.items():
+            grouped[task_name.name].append(status)
+
+        return {name: status_or(*statuses) for name, statuses in grouped.items()}
 
     @_transaction
-    def status(self, names: Collection[IvyName]) -> dict[IvyName, Status]:
+    def status(self, names: Collection[IvyName]) -> dict[IvyTaskName, Status]:
         cursor = self.db.execute(
             """
-                SELECT name, status FROM proof_status, json_each(?) WHERE name = json_each.value
+                SELECT name, solver, status FROM proof_status, json_each(?)
+                WHERE name = json_each.value
             """,
             (json.dumps([name.db_key for name in names]),),
         )
-        return {IvyName.from_db_key(name): status for name, status in cursor}
+        return {
+            IvyTaskName(IvyName.from_db_key(name), solver): status
+            for name, solver, status in cursor
+        }
 
     @_transaction
-    def initialize_status(self, names: Collection[IvyName]) -> None:
+    def initialize_status(self, names: Collection[IvyTaskName]) -> None:
         self.db.executemany(
-            """INSERT INTO proof_status (name, status) VALUES (?, 'pending')""",
-            [(name.db_key,) for name in names],
+            """
+                INSERT INTO proof_status (name, solver, status)
+                VALUES (:name, :solver, 'pending')
+            """,
+            [dict(name=task_name.name.db_key, solver=task_name.solver) for task_name in names],
         )
 
     def change_status(
-        self, name: IvyName, new_status: Status, require: Container[Status] | None = None
+        self, name: IvyTaskName, new_status: Status, require: Container[Status] | None = None
     ) -> Status | None:
         return self.change_status_many([name], new_status, require).get(name, None)
 
     @_transaction
     def change_status_many(
-        self, names: Iterable[IvyName], new_status: Status, require: Container[Status] | None = None
-    ) -> dict[IvyName, Status]:
-        results: dict[IvyName, Status] = {}
-        for name in names:
+        self,
+        names: Iterable[IvyTaskName],
+        new_status: Status,
+        require: Container[Status] | None = None,
+    ) -> dict[IvyTaskName, Status]:
+        results: dict[IvyTaskName, Status] = {}
+        for task_name in names:
             old_status = self.db.execute(
-                """SELECT status FROM proof_status WHERE name = ?""", (name.db_key,)
+                """SELECT status FROM proof_status WHERE name = :name AND solver = :solver""",
+                dict(name=task_name.name.db_key, solver=task_name.solver),
             ).fetchone()[0]
 
             if require is not None and old_status not in require:
-                results[name] = old_status
-
-            self.db.execute(
-                """UPDATE proof_status SET status = :status WHERE name = :name""",
-                dict(name=name.db_key, status=new_status),
-            )
+                results[task_name] = old_status
+            else:
+                self.db.execute(
+                    """
+                        UPDATE proof_status SET status = :status
+                        WHERE name = :name AND solver = :solver
+                    """,
+                    dict(name=task_name.name.db_key, solver=task_name.solver, status=new_status),
+                )
 
         return results

@@ -9,7 +9,7 @@ from yosys_mau import task_loop as tl
 from yosys_mau.source_str import read_file
 from yosys_mau.stable_set import StableSet
 
-from .data import IvyData, IvyName
+from .data import IvyData, IvyTaskName
 from .status_db import IvyStatusDb
 
 
@@ -70,6 +70,11 @@ def arg_parser() -> argparse.ArgumentParser:
         help="run proof tasks",
     )
 
+    cmd_prove.add_argument(
+        "--reset-schedule",
+        action="store_true",
+        help="assume that no tasks are currently running or scheduled to run",
+    )
     cmd_prove.add_argument("proof_args", metavar="<proof>", nargs="*", help="proof tasks to run")
 
     cmd_status = commands.add_parser(
@@ -99,7 +104,9 @@ class App:
     command: Literal["run", "setup", "prove", "status"]
 
     proof_args: list[str]
-    proof_tasks: list[IvyName]
+    proof_tasks: list[IvyTaskName]
+
+    reset_schedule: bool = False
 
     config: IvyConfig
 

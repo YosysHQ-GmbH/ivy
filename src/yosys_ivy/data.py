@@ -14,7 +14,14 @@ from yosys_mau.stable_set import StableSet
 from yosys_ivy.sccs import find_sccs
 
 Status = Literal[
-    "pending", "scheduled", "running", "pass", "fail", "error", "unknown", "unreachable"
+    "pending",  # unknown status, not yet scheduled
+    "scheduled",  # scheduled for execution
+    "running",  # currently running
+    "pass",  # passed, invariant holds
+    "fail",  # counter example to invariant found
+    "error",  # error during execution
+    "unknown",  # finished without proving the invariant or finding a counter example
+    "unreachable",  # cycle in the depe
 ]
 
 NodeType = Literal["and", "or"]
@@ -43,7 +50,7 @@ def status_or(*status: Status) -> Status:
     return status_list[max((status_index[s] for s in status), default=0)]
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, order=True)
 class IvyName:
     parts: tuple[str, ...]
 
@@ -96,8 +103,14 @@ class IvyName:
         return cls.from_json(json.loads(key))
 
 
+@dataclass(frozen=True, order=True)
+class IvyTaskName:
+    name: IvyName
+    solver: str
+
+
 StatusType = Literal[
-    "step",  # The result of running a proof, assuming all assumptions hold
+    "task",  # The result of running a proof, assuming all assumptions hold
     "proof",  # The result of the proof and its assumptions
     "assume_proof",  # The conjunction of all non-locally asserted assumptions of a proof
     "entity",  # The status of an entity that is assumed
@@ -128,22 +141,61 @@ class IvyEntity(abc.ABC):
     filename: str
     src_loc: str
 
+    default_priority: int | None
+    solve: bool
+    solve_with: dict[str, int | None]
+
     def __init__(self, ivy_data: IvyData, json_data: Any):
         self.ivy_data = ivy_data
         self.json_data = json_data
         self.name = IvyName(tuple(json_data["name"]))
         self.src_loc = self.json_data["srcloc"]
+
+        self.solve = False
+        self.default_priority = None
+        self.solve_with = {}
+
         self.filename = ivy_data.uniquify(self.name.filename)
         if self.name in ivy_data.entities:
             tl.log_error("name collision in export data")  # TODO better error message
         ivy_data.entities[self.name] = self
 
-    def edges(self) -> Iterator[StatusEdge]:
-        yield from ()
+    def graph_sinks(self) -> Iterator[StatusKey]:
+        if self.solve:
+            yield StatusKey("entity", self.name)
+
+    def graph_edges(self) -> Iterator[StatusEdge]:
+        if self.solve:
+            yield StatusEdge(StatusKey("task", self.name), StatusKey("entity", self.name))
+
+    def proof_tasks(self) -> Iterator[IvyTaskName]:
+        if self.solve:
+            for solver in self.solve_with:
+                yield IvyTaskName(self.name, solver)
 
     @property
     def prefixed_name(self) -> str:
         return f"{self.type} {self.name}"
+
+    def add_solve(self, solve: IvySolve, local: bool = False):
+        assert self.name == solve.name  # Should be checked by the frontend, so not user-facing
+        assert self.type == solve.type  # Should be checked by the frontend, so not user-facing
+        if not local:
+            self.solve = True
+        if solve.solver is None:
+            if solve.priority is not None and (
+                self.default_priority is None or self.default_priority < solve.priority
+            ):
+                self.default_priority = solve.priority
+        else:
+            priority = self.solve_with.get(solve.solver, None)
+            if solve.priority is not None and (priority is None or priority < solve.priority):
+                priority = solve.priority
+
+            self.solve_with[solve.solver] = priority
+
+    def dependency_order(self) -> int:
+        return self.ivy_data.status_graph.order[StatusKey("entity", self.name)]
 
 
 @dataclass(frozen=True)
@@ -215,6 +267,37 @@ class IvyAssert(IvyProofItem):
         return assume
 
 
+@dataclass(frozen=True)
+class IvySolve:
+    name: IvyName
+    type: IvyType
+    solver: str | None = None
+    priority: int | None = None
+
+    def _initialize_from_json(self, json_data: Any):
+        type = json_data["type"]
+        assert type in ("invariant", "proof", "sequence", "property")
+        object.__setattr__(self, "type", type)
+        object.__setattr__(self, "priority", json_data.get("priority", None))
+        object.__setattr__(self, "solver", json_data.get("with", None))
+
+
+@dataclass(frozen=True)
+class IvyModuleSolve(IvySolve):
+    def __init__(self, ivy_data: IvyData, json_data: Any):
+        object.__setattr__(self, "name", IvyName(tuple(json_data["name"])))
+        self._initialize_from_json(json_data)
+        ivy_data.solves.add(self)
+
+
+@dataclass(frozen=True)
+class IvyProofSolve(IvyProofItem, IvySolve):
+    def __init__(self, proof: IvyProof, json_data: Any):
+        self._initialize_from_json(json_data)
+        super().__init__(proof, json_data)
+        proof.solves.add(self)
+
+
 @dataclass
 class StepSetup:
     assumes: StableSet[IvyName]
@@ -234,6 +317,7 @@ class IvyProof(IvyEntity):
     assumes: StableSet[IvyAssume]
     asserts: StableSet[IvyAssert]
     exports: StableSet[IvyExport]
+    solves: StableSet[IvyProofSolve]
 
     def __init__(self, ivy_data: IvyData, json_data: Any):
         super().__init__(ivy_data, json_data)
@@ -246,6 +330,7 @@ class IvyProof(IvyEntity):
         self.exports = StableSet()
         self.asserts = StableSet()
         self.assumes = StableSet()
+        self.solves = StableSet()
 
         for use_proof_json in self.json_data.get("use_proof", []):
             IvyUse(self, use_proof_json)
@@ -259,22 +344,44 @@ class IvyProof(IvyEntity):
         for export_json in self.json_data.get("export", []):
             IvyExport(self, export_json)
 
+        for solve_json in self.json_data.get("solve", []):
+            if solve_json["type"] in ("all", "self"):  # TODO remove 'all' eventually
+                self.add_solve(
+                    IvySolve(
+                        self.name,
+                        self.type,
+                        solver=solve_json["with"],
+                        priority=solve_json.get("priority", None),
+                    ),
+                    local=True,
+                )
+            else:
+                IvyProofSolve(self, solve_json)
+
         ivy_data.proofs.append(self)
 
-    def edges(self) -> Iterator[StatusEdge]:
-        yield StatusEdge(StatusKey("step", self.name), StatusKey("proof", self.name))
+    def graph_sinks(self) -> Iterator[StatusKey]:
+        if self.solve and self.asserts:
+            yield StatusKey("proof", self.name)
+            for assert_item in self.asserts:
+                yield StatusKey("entity", assert_item.name)
 
-        for assume_item in self.assumes:
-            yield StatusEdge(
-                StatusKey("cross" if assume_item.cross else "entity", assume_item.name),
-                StatusKey("proof", self.name),
-            )
+    def graph_edges(self) -> Iterator[StatusEdge]:
+        if self.solve and self.asserts:
+            yield StatusEdge(StatusKey("task", self.name), StatusKey("proof", self.name))
+
+            for assume_item in self.assumes:
+                yield StatusEdge(
+                    StatusKey("cross" if assume_item.cross else "entity", assume_item.name),
+                    StatusKey("proof", self.name),
+                )
 
         for use_item in self.uses:
-            yield StatusEdge(
-                StatusKey("export", use_item.name),
-                StatusKey("proof", self.name),
-            )
+            if self.solve:
+                yield StatusEdge(
+                    StatusKey("export", use_item.name),
+                    StatusKey("proof", self.name),
+                )
 
             if use_item.export:
                 yield StatusEdge(
@@ -282,20 +389,21 @@ class IvyProof(IvyEntity):
                     StatusKey("export", self.name),
                 )
 
-        for assert_item in self.asserts:
-            if not assert_item.local:  # assuming a proof doesn't assume local properties
+        if self.solve and self.asserts:
+            for assert_item in self.asserts:
+                if not assert_item.local:  # assuming a proof doesn't assume local properties
+                    yield StatusEdge(
+                        StatusKey("entity", assert_item.name),
+                        StatusKey("assume_proof", self.name),
+                    )
+
                 yield StatusEdge(
+                    StatusKey("proof", self.name),
                     StatusKey("entity", assert_item.name),
-                    StatusKey("assume_proof", self.name),
                 )
 
-            yield StatusEdge(
-                StatusKey("proof", self.name),
-                StatusKey("entity", assert_item.name),
-            )
-
-        # We have an extra node because we want the and of all the assumptions but entity nodes take
-        # the or of all their incoming edges.
+        # We have an extra node because we want the 'and' of all the assumptions but entity nodes
+        # take the 'or' of all their incoming edges.
         yield StatusEdge(StatusKey("assume_proof", self.name), StatusKey("entity", self.name))
 
         for export_item in self.exports:
@@ -303,6 +411,14 @@ class IvyProof(IvyEntity):
                 StatusKey("cross" if export_item.cross else "entity", export_item.name),
                 StatusKey("export", self.name),
             )
+
+    def proof_tasks(self) -> Iterator[IvyTaskName]:
+        if self.solve and self.asserts:
+            for solver in self.solve_with:
+                yield IvyTaskName(self.name, solver)
+
+    def dependency_order(self) -> int:
+        return self.ivy_data.status_graph.order[StatusKey("proof", self.name)]
 
     def step_setup(self) -> StepSetup:
         assumes = StableSet()
@@ -378,7 +494,11 @@ class IvyData:
 
     entities: dict[IvyName, IvyEntity]
 
+    solves: StableSet[IvyModuleSolve]
+
     filenames: set[str] = field(repr=False)
+
+    proof_tasks: StableSet[IvyTaskName] = field(repr=False)
 
     status_graph: IvyStatusGraph = field(repr=False)
 
@@ -388,6 +508,7 @@ class IvyData:
         self.proofs = []
         self.invariants = []
         self.entities = {}
+        self.solves = StableSet()
 
         self.filenames = set()
 
@@ -397,11 +518,19 @@ class IvyData:
         for proof_data in json_data["invariants"]:
             IvyInvariant(self, proof_data)
 
+        for solve_data in json_data["solve"]:
+            IvyModuleSolve(self, solve_data)
+
         # TODO add all referenced sequences and properties so we can list them and store associated
         # data
 
-        self.status_graph = IvyStatusGraph(self)
+        self.resolve_solves()
 
+        self.proof_tasks = StableSet()
+        for entity in self:
+            self.proof_tasks.update(entity.proof_tasks())
+
+        self.status_graph = IvyStatusGraph(self)
 
     def uniquify(self, name: str) -> str:
         if name not in self.filenames:
@@ -442,7 +571,36 @@ class IvyData:
         return invariant
 
     def status_map(self) -> IvyStatusMap:
-        return IvyStatusMap(self)
+        return IvyStatusMap(self.status_graph)
+
+    def resolve_solves(self):
+        pending: list[IvyProof] = []
+
+        def add_solve(solve: IvySolve):
+            entity = self[solve.name]
+            if isinstance(entity, IvyProof) and not entity.solve:
+                pending.append(entity)
+            entity.add_solve(solve)
+
+        for proof in self.proofs:
+            if proof.automatic:
+                add_solve(IvySolve(proof.name, proof.type))
+
+        for solve in self.solves:
+            add_solve(solve)
+
+        while pending:
+            proof = pending.pop()
+            for solve in proof.solves:
+                add_solve(solve)
+
+        for entity in self:
+            if entity.solve and not entity.solve_with:
+                entity.solve_with["default"] = None
+
+            for solver, priority in entity.solve_with.items():
+                if priority is None:
+                    entity.solve_with[solver] = entity.default_priority
 
 
 class IvyStatusGraph:
@@ -462,13 +620,21 @@ class IvyStatusGraph:
     cross_indices: list[int]
 
     non_entity_sources: StableSet[StatusKey]
+    tasks: StableSet[StatusKey]
+
+    sinks: StableSet[StatusKey]
 
     def __init__(self, data: IvyData):
-
         self.out_edges = defaultdict(StableSet)
         self.in_edges = defaultdict(StableSet)
+        self.sinks = StableSet()
         for entity in data:
-            for edge in entity.edges():
+            for sink in entity.graph_sinks():
+                self.in_edges[sink]  # create set if it doesn't exist
+                self.out_edges[sink]  # create set if it doesn't exist
+                self.sinks.add(sink)
+
+            for edge in entity.graph_edges():
                 self.out_edges[edge.source].add(edge)
                 self.in_edges[edge.target].add(edge)
 
@@ -476,9 +642,12 @@ class IvyStatusGraph:
                 self.out_edges[edge.target]  # create set if it doesn't exist
 
         self.non_entity_sources = StableSet()
+        self.tasks = StableSet()
         for key, in_edges in self.in_edges.items():
-            if key.type not in ("entity", "step") and not in_edges:
+            if key.type not in ("entity", "task") and not in_edges:
                 self.non_entity_sources.add(key)
+            if key.type == "task":
+                self.tasks.add(key)
 
         self.order = {}
         self.order_list = []
@@ -496,9 +665,7 @@ class IvyStatusGraph:
             for key in self.order_list
         ]
 
-        self.cross_indices = [
-            i for i, key in enumerate(self.order_list) if key.type == "cross"
-        ]
+        self.cross_indices = [i for i, key in enumerate(self.order_list) if key.type == "cross"]
 
         self.out_edges_list = [
             sorted([self.order[edge.target] for edge in self.out_edges[source]])
@@ -522,8 +689,8 @@ class IvyStatusMap:
     cross_dirty: list[int]
     cross_dirty_list: list[int]
 
-    def __init__(self, data: IvyData):
-        self.status_graph = data.status_graph
+    def __init__(self, status_graph: IvyStatusGraph):
+        self.status_graph = status_graph
 
         self.current_status = ["unreachable"] * len(self.status_graph.order)
 
@@ -537,6 +704,14 @@ class IvyStatusMap:
 
         for key in self.status_graph.non_entity_sources:
             self.set_status(key, "pass")
+        for key in self.status_graph.tasks:
+            self.set_status(key, "pending")
+
+    def __str__(self):
+        return "\n".join(
+            f"{key.type} {key.name}: {status}"
+            for key, status in zip(self.status_graph.order_list, self.current_status)
+        )
 
     def status(self, key: StatusKey) -> Status:
         return self._status(self.status_graph.order[key])
@@ -595,3 +770,12 @@ class IvyStatusMap:
                 self._set_status(cross, self._status(index))
             self.cross_dirty_list = []
         tl.log_debug("took", time.time() - start, "seconds")
+
+    def unreachable_sinks(self) -> Iterator[StatusKey]:
+        for sink in self.status_graph.sinks:
+            if self.status(sink) == "unreachable":
+                yield sink
+
+    def sink_status(self) -> Iterator[tuple[StatusKey, Status]]:
+        for sink in self.status_graph.sinks:
+            yield sink, self.status(sink)

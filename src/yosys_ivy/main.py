@@ -8,7 +8,6 @@ import traceback
 from dataclasses import dataclass
 from pathlib import Path, PurePath
 from textwrap import dedent
-from typing import Collection
 
 import click
 import yosys_mau.task_loop.job_server as job
@@ -17,7 +16,7 @@ from yosys_mau.source_str import plain_str, report
 from yosys_mau.stable_set import StableSet
 
 from .config import App, arg_parser, parse_config
-from .data import IvyData, IvyName, IvyProof, StatusKey
+from .data import IvyData, IvyName, IvyProof, IvyTaskName, StatusKey
 from .status_db import IvyStatusDb, Status
 
 status_colors = {
@@ -70,11 +69,12 @@ async def task_loop_main() -> None:
     await ivy_export.finished
     App.data = ivy_export.data
 
-    check_proof_cycles()  # TODO always check this?
+    if App.command in ("run", "setup"):
+        check_proof_cycles()  # TODO always check this?
 
-    all_proof_tasks = create_sby_files()
+        create_sby_files()
 
-    run_command(all_proof_tasks)
+    run_command()
 
 
 def setup_logging() -> io.StringIO:
@@ -277,26 +277,19 @@ class IvyPrepareDesign(tl.Process):
 def check_proof_cycles():
     computed_status = App.data.status_map()
 
-    # TODO how does this interact with the 'solve' statement in the input?
-
-    for entity in App.data.proofs:
-        computed_status.set_status(StatusKey("step", entity.name), "pass")
     computed_status.iterate()
 
-    # TODO determine which things should be reachable
-    for entity in App.data:
-        if (
-            computed_status.status(
-                StatusKey("entity" if entity.type != "proof" else "proof", entity.name)
-            )
-            == "unreachable"
-        ):
-            # TODO better error message, with cross and multiple proofs, can we do better than
-            # listing everything unreachable?
-            tl.log_warning(f"unreachable {entity.type} {entity.name}")
+    unreachable = [App.data[key.name] for key in computed_status.unreachable_sinks()]
+
+    unreachable.sort(key=lambda entity: (entity.type, entity.name))
+
+    for entity in unreachable:
+        # TODO better error message, with cross and multiple proofs, can we do better than
+        # listing everything unreachable?
+        tl.log_warning(f"unreachable {entity.type} {entity.name}")
 
 
-def create_sby_files() -> Collection[IvyName]:
+def create_sby_files() -> None:
     sby_dir = App.work_dir / "tasks"
 
     create_files = True
@@ -309,15 +302,13 @@ def create_sby_files() -> Collection[IvyName]:
     if create_files:
         tl.log("Creating proof tasks")
 
-    proof_tasks = StableSet()
+    for task_name in App.data.proof_tasks:
+        entity = App.data[task_name.name]
 
-    for item in App.data.proofs:
-        proof_tasks.add(item.name)
-
-        if not create_files:
+        if not isinstance(entity, IvyProof):
             continue
 
-        setup = item.step_setup()
+        setup = entity.step_setup()
 
         attributes: dict[str, StableSet[IvyName]] = {}
 
@@ -331,7 +322,7 @@ def create_sby_files() -> Collection[IvyName]:
             if names
         )
 
-        sby_path = sby_dir / f"{item.filename}.sby"
+        sby_path = sby_dir / f"{entity.filename}.sby"
 
         sby_path.write_text(
             dedent(
@@ -363,30 +354,15 @@ def create_sby_files() -> Collection[IvyName]:
         )
         tl.log_debug(f"wrote sby file {str(sby_path)!r}")
 
-    return proof_tasks
 
-
-def run_command(all_proof_tasks: Collection[IvyName]) -> None:
+def run_command() -> None:
     if App.command in ("run", "setup"):
-        App.status_db.initialize_status(all_proof_tasks)
+        App.status_db.initialize_status(App.data.proof_tasks)
 
     if not App.proof_args:
-        App.proof_tasks = list(all_proof_tasks)
+        App.proof_tasks = list(App.data.proof_tasks)
     else:
-        proofs: list[IvyName] = []
-        for arg in App.proof_args:
-            found = None
-            # TODO better matching, move into config.py
-            for name in all_proof_tasks:
-                if name.parts[-1] == arg:
-                    found = name
-                    break
-            if found is None:
-                tl.log_error(f"Proof task {arg!r} not found")
-            else:
-                proofs.append(found)
-
-        App.proof_tasks = proofs
+        tl.log_error("TODO proof task selection not implemented yet")
 
     status_task = tl.Task(on_run=run_status_task, name="status")
 
@@ -401,7 +377,11 @@ def run_command(all_proof_tasks: Collection[IvyName]) -> None:
         if large_task_count:
             tl.log(f"Scheduling {len(tasks)} proof tasks")
 
-        non_pending = App.status_db.change_status_many(tasks, "scheduled", require=("pending",))
+        required_status = (
+            ("pending", "scheduled", "running") if App.reset_schedule else ("pending",)
+        )
+
+        non_pending = App.status_db.change_status_many(tasks, "scheduled", require=required_status)
 
         for name in tasks:
             if status := non_pending.get(name, None):
@@ -416,6 +396,10 @@ def run_command(all_proof_tasks: Collection[IvyName]) -> None:
                 if prepare_design is None:
                     prepare_design = IvyPrepareDesign()
                 proof_task.depends_on(prepare_design)
+
+                proof_task[tl.priority.JobPriorities].priority = (
+                    -App.data[name.name].dependency_order(),
+                )
                 # TODO proof_task[tl.priority.JobPriorities].priority = ...
                 # TODO priority sign sentinel task
                 proof_task.handle_error(proof_task_error_handler)
@@ -424,20 +408,20 @@ def run_command(all_proof_tasks: Collection[IvyName]) -> None:
 
 @dataclass
 class ProofStatusEvent(tl.TaskEvent):
-    name: IvyName
+    name: IvyTaskName
     status: Status
 
 
 class IvyProofTask(tl.Process):
-    def __init__(self, name: IvyName):
-        self.filename = App.data[name].filename
+    def __init__(self, name: IvyTaskName):
+        self.filename = App.data[name.name].filename
         super().__init__(
             ["sby", "-f", f"{self.filename}.sby"],
             cwd=App.work_dir / "tasks",
         )
         self.name = f"proof({name})"
         self.proof_name = name
-        self[tl.LogContext].scope = str(name)
+        self[tl.LogContext].scope = str(name.name)
 
     def on_cancel(self):
         if self.parent and not self.parent.is_aborted:
@@ -520,26 +504,27 @@ def run_status_task():
         return
     tl.log("Proof status:")
 
-    full_status = App.status_db.full_status()
+    full_status = App.status_db.reduced_status()
 
     computed_status = App.data.status_map()
 
-    for name, status in full_status.items():
-        tl.log_debug("step status", name, status)
-        computed_status.set_status(StatusKey("step", name), status)
+    for key in computed_status.status_graph.tasks:
+        computed_status.set_status(key, full_status.get(key.name, "pending"))
 
     computed_status.iterate()
 
     # TODO produce a nicer status output again
-    for entity in App.data:
+    sink_status = [(App.data[key.name], status) for key, status in computed_status.sink_status()]
+    sink_status.sort(key=lambda item: (item[0].type, item[0].name))
+    for entity, status in sink_status:
         if isinstance(entity, IvyProof):
-            step = computed_status.status(StatusKey("step", entity.name))
-            status = computed_status.status(StatusKey("proof", entity.name))
-            if step != status:
+            task_status = computed_status.status(StatusKey("task", entity.name))
+            if task_status != status:
                 tl.log(
-                    f"  {entity.prefixed_name}: {color_status(status)} (step {color_status(step)})"
+                    f"  {entity.prefixed_name}: {color_status(status)}"
+                    f" (task {color_status(task_status)})"
                 )
-            tl.log(f"  {entity.prefixed_name}: {color_status(status)}")
+            else:
+                tl.log(f"  {entity.prefixed_name}: {color_status(status)}")
         else:
-            status = computed_status.status(StatusKey("entity", entity.name))
             tl.log(f"  {entity.prefixed_name}: {color_status(status)}")
