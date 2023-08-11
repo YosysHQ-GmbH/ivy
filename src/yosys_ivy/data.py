@@ -8,6 +8,7 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import Any, Iterator, Literal, NamedTuple
 
+import click
 import yosys_mau.task_loop as tl
 from yosys_mau.stable_set import StableSet
 
@@ -38,6 +39,21 @@ status_list: list[Status] = [
     "pass",
 ]
 
+status_colors = {
+    "pending": "blue",
+    "scheduled": "cyan",
+    "running": "yellow",
+    "unknown": "red",
+    "error": "red",
+    "unreachable": "red",
+    "fail": "red",
+    "pass": "green",
+}
+
+
+def color_status(status: Status) -> str:
+    return click.style(status, fg=status_colors.get(status, None))
+
 
 status_index = {status: i for i, status in enumerate(status_list)}
 
@@ -48,6 +64,12 @@ def status_and(*status: Status) -> Status:
 
 def status_or(*status: Status) -> Status:
     return status_list[max((status_index[s] for s in status), default=0)]
+
+
+def status_or_equivalent(*status: Status) -> Status:
+    if "fail" in status:
+        return "fail"
+    return status_or(*status)
 
 
 @dataclass(frozen=True, order=True)
@@ -144,6 +166,7 @@ class IvyEntity(abc.ABC):
     default_priority: int | None
     solve: bool
     solve_with: dict[str, int | None]
+    solve_order: dict[str, int]
 
     def __init__(self, ivy_data: IvyData, json_data: Any):
         self.ivy_data = ivy_data
@@ -159,6 +182,13 @@ class IvyEntity(abc.ABC):
         if self.name in ivy_data.entities:
             tl.log_error("name collision in export data")  # TODO better error message
         ivy_data.entities[self.name] = self
+
+    def step_setup(self) -> StepSetup:
+        return StepSetup(
+            assumes=StableSet(),
+            cross_assumes=StableSet(),
+            asserts=StableSet([self.name]),
+        )
 
     def graph_sinks(self) -> Iterator[StatusKey]:
         if self.solve:
@@ -498,6 +528,9 @@ class IvyData:
 
     filenames: set[str] = field(repr=False)
 
+    task_filenames: dict[IvyTaskName, str] = field(repr=False)
+    task_info: dict[IvyTaskName, str] = field(repr=False)
+
     proof_tasks: StableSet[IvyTaskName] = field(repr=False)
 
     status_graph: IvyStatusGraph = field(repr=False)
@@ -527,17 +560,40 @@ class IvyData:
         self.resolve_solves()
 
         self.proof_tasks = StableSet()
+        self.task_filenames = {}
+        self.task_info = {}
         for entity in self:
-            self.proof_tasks.update(entity.proof_tasks())
+            entity_tasks = StableSet(entity.proof_tasks())
+            self.proof_tasks.update(entity_tasks)
+            if len(entity_tasks) == 1:
+                task = entity_tasks.pop()
+                self.task_filenames[task] = entity.filename
+                self.task_info[task] = str(task.name)
+            else:
+                for task in entity_tasks:
+                    solver_name = task.solver.split()
+                    for i, part in enumerate(solver_name):
+                        if part.startswith("-"):
+                            del solver_name[i:]
+                            break
+                    solver_name = "_".join(solver_name)
+                    self.task_filenames[task] = self.uniquify(
+                        f"{entity.name.filename}-{solver_name}"
+                    )
+                    self.task_info[task] = f"{task.name} ({task.solver})"
+
+            self.proof_tasks.update()
 
         self.status_graph = IvyStatusGraph(self)
 
     def uniquify(self, name: str) -> str:
+        if len(name) > 200:
+            name = name[:100] + "..." + name[-100:]
         if name not in self.filenames:
             self.filenames.add(name)
             return name
         i = 1
-        while (candidate := f"{name}_{i}") in self.filenames:
+        while (candidate := f"{name}.{i}") in self.filenames:
             i += 1
         self.filenames.add(candidate)
         return candidate
@@ -601,6 +657,12 @@ class IvyData:
             for solver, priority in entity.solve_with.items():
                 if priority is None:
                     entity.solve_with[solver] = entity.default_priority
+
+            order = list(entity.solve_with.items())
+            order.sort(key=lambda item: item[1] or 0)
+            entity.solve_order = {}
+            for i, item in enumerate(order):
+                entity.solve_order[item[0]] = i
 
 
 class IvyStatusGraph:

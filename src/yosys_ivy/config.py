@@ -93,6 +93,7 @@ def arg_parser() -> argparse.ArgumentParser:
 
 @tl.task_context
 class App:
+    # TODO split this into multiple contexts and only keep config related parst here
     raw_args: argparse.Namespace
 
     ivy_file: Path
@@ -118,6 +119,7 @@ class App:
 
 class IvyOptions(cfg.ConfigOptions):
     top = cfg.Option(cfg.StrValue(allow_empty=False))
+    default_solver = cfg.Option(cfg.StrValue(), default="sby smtbmc")
 
 
 class IvyConfig(cfg.ConfigParser):
@@ -127,7 +129,6 @@ class IvyConfig(cfg.ConfigParser):
     files = cfg.FilesSection()
     file = cfg.ArgSection(cfg.StrSection(), cfg.StrValue())
 
-    engines = cfg.StrSection(default="smtbmc")
     script = cfg.StrSection(default="prep")
 
 

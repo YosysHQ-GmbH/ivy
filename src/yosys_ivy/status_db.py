@@ -9,7 +9,7 @@ from typing import Any, Callable, Collection, Container, Iterable, TypeVar
 
 from yosys_mau import task_loop as tl
 
-from .data import IvyName, IvyTaskName, Status, status_or
+from .data import IvyName, IvyTaskName, Status, status_or_equivalent
 
 Fn = TypeVar("Fn", bound=Callable[..., Any])
 
@@ -83,7 +83,7 @@ class IvyStatusDb:
         for task_name, status in full.items():
             grouped[task_name.name].append(status)
 
-        return {name: status_or(*statuses) for name, statuses in grouped.items()}
+        return {name: status_or_equivalent(*statuses) for name, statuses in grouped.items()}
 
     @_transaction
     def status(self, names: Collection[IvyName]) -> dict[IvyTaskName, Status]:

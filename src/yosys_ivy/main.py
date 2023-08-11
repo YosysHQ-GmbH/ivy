@@ -5,34 +5,20 @@ import json
 import os
 import shutil
 import traceback
-from dataclasses import dataclass
+import pickle
 from pathlib import Path, PurePath
 from textwrap import dedent
 
-import click
 import yosys_mau.task_loop.job_server as job
 from yosys_mau import task_loop as tl
 from yosys_mau.source_str import plain_str, report
-from yosys_mau.stable_set import StableSet
+
+from yosys_ivy.design import Design
 
 from .config import App, arg_parser, parse_config
-from .data import IvyData, IvyName, IvyProof, IvyTaskName, StatusKey
-from .status_db import IvyStatusDb, Status
-
-status_colors = {
-    "pending": "blue",
-    "scheduled": "cyan",
-    "running": "yellow",
-    "unknown": "red",
-    "error": "red",
-    "unreachable": "red",
-    "fail": "red",
-    "pass": "green",
-}
-
-
-def color_status(status: Status) -> str:
-    return click.style(status, fg=status_colors.get(status, None))
+from .data import IvyData, IvyProof, StatusKey, color_status
+from .solver import IvySolver, ProofStatusEvent, SolverContext, Solvers
+from .status_db import IvyStatusDb
 
 
 def main() -> None:
@@ -69,10 +55,11 @@ async def task_loop_main() -> None:
     await ivy_export.finished
     App.data = ivy_export.data
 
+    Design()
+    Solvers()
+
     if App.command in ("run", "setup"):
         check_proof_cycles()  # TODO always check this?
-
-        create_sby_files()
 
     run_command()
 
@@ -139,6 +126,7 @@ def setup_workdir(early_log: io.StringIO, setup: bool = False) -> None:
             target = (work_dir / "logfile.txt").open("x")
 
         (work_dir / "model").mkdir()
+        (work_dir / "tasks").mkdir()
 
     if target:
         target.write(early_log.getvalue())
@@ -228,6 +216,16 @@ class IvyExportJson(tl.Process):
         await super().on_prepare()
 
     async def on_run(self) -> None:
+        try:
+            pickle_file = (App.work_dir / "ivy_data.pickle").open("rb")
+        except FileNotFoundError:
+            pass
+        else:
+            tl.log_debug("Reusing existing 'ivy_data.pickle'")
+            with pickle_file:
+                self.data = pickle.load(pickle_file)
+            return
+
         if (App.work_dir / "ivy_export.json").exists():
             tl.log_debug("Reusing existing 'ivy_export.json'")
             self.on_exit(0)
@@ -239,39 +237,8 @@ class IvyExportJson(tl.Process):
 
         with (App.work_dir / "ivy_export.json").open() as f:
             self.data = IvyData(json.load(f))
-
-
-class IvyPrepareDesign(tl.Process):
-    def __init__(self):
-        # TODO use common infrastructure for overwriting executable paths
-        super().__init__(["yosys", "-ql", "design.log", "design.ys"], cwd=App.work_dir / "model")
-        self.name = "design"
-        self.log_output()  # TODO use something that highlights errors/warnings
-
-    async def on_prepare(self) -> None:
-        tl.LogContext.scope = self.name
-
-        # TODO for future features running the user script to prepare the design just once may not
-        # be sufficient, but we should minimize the number of times we run it and still group
-        # running it for compatible proof tasks. It would also be possible to reuse the SBY prep
-        # step across multiple proof tasks when they share the same solver configuration.
-
-        script = dedent(
-            f"""\
-                # running in {self.cwd}
-                read_rtlil export.il
-                {App.config.script}
-                write_rtlil design.il
-            """
-        )
-        (App.work_dir / "model" / "design.ys").write_text(script)
-
-    async def on_run(self) -> None:
-        if (App.work_dir / "model" / "design.il").exists():
-            tl.log_debug("Reusing existing 'design.il'")
-            self.on_exit(0)
-            return
-        await super().on_run()
+        with (App.work_dir / "ivy_data.pickle").open("wb") as f:
+            pickle.dump(self.data, f)
 
 
 def check_proof_cycles():
@@ -289,72 +256,6 @@ def check_proof_cycles():
         tl.log_warning(f"unreachable {entity.type} {entity.name}")
 
 
-def create_sby_files() -> None:
-    sby_dir = App.work_dir / "tasks"
-
-    create_files = True
-
-    try:
-        sby_dir.mkdir()
-    except FileExistsError:
-        create_files = False
-
-    if create_files:
-        tl.log("Creating proof tasks")
-
-    for task_name in App.data.proof_tasks:
-        entity = App.data[task_name.name]
-
-        if not isinstance(entity, IvyProof):
-            continue
-
-        setup = entity.step_setup()
-
-        attributes: dict[str, StableSet[IvyName]] = {}
-
-        attributes["ivy_assert"] = setup.asserts
-        attributes["ivy_assume"] = setup.assumes
-        attributes["ivy_cross_assume"] = setup.cross_assumes
-
-        setattrs = "\n".join(
-            f"setattr -set {attr} 1 {' '.join(name.rtlil for name in names)}"
-            for attr, names in attributes.items()
-            if names
-        )
-
-        sby_path = sby_dir / f"{entity.filename}.sby"
-
-        sby_path.write_text(
-            dedent(
-                """\
-                # running in {sby_dir}
-                [options]
-                mode prove
-                depth 20
-                assume_early off
-
-                [engines]
-                {engines}
-                [script]
-                read_rtlil ../../../model/design.il
-                uniquify; hierarchy -nokeep_asserts
-                {setattrs}
-                select -set used */a:ivy_assert */a:ivy_assume */a:ivy_cross_assume
-                chformal -remove */a:ivy_property @used %d
-                chformal -assert2assume */a:ivy_assume */a:ivy_cross_assume
-                chformal -delay 1 */a:ivy_cross_assume
-                """
-            ).format(
-                sby_dir=sby_dir,
-                engines=App.config.engines,
-                read=App.config.read,
-                top=App.config.options.top,
-                setattrs=setattrs,
-            )
-        )
-        tl.log_debug(f"wrote sby file {str(sby_path)!r}")
-
-
 def run_command() -> None:
     if App.command in ("run", "setup"):
         App.status_db.initialize_status(App.data.proof_tasks)
@@ -367,8 +268,6 @@ def run_command() -> None:
     status_task = tl.Task(on_run=run_status_task, name="status")
 
     tl.current_task().sync_handle_events(ProofStatusEvent, proof_event_handler)
-
-    prepare_design = None
 
     if App.command in ("run", "prove"):
         tasks = App.proof_tasks
@@ -383,94 +282,29 @@ def run_command() -> None:
 
         non_pending = App.status_db.change_status_many(tasks, "scheduled", require=required_status)
 
-        for name in tasks:
-            if status := non_pending.get(name, None):
+        for task in tasks:
+            info = App.data.task_info[task]
+            if status := non_pending.get(task, None):
                 if App.proof_args:
                     # don't warn without an explicit selection of proofs
-                    tl.log_warning(f"Status of proof {str(name)!r} is {status!r}, skipping")
+                    tl.log_warning(f"Status of proof {info} is {status!r}, skipping")
             else:
                 if not large_task_count:
-                    tl.log(f"Scheduling proof task {str(name)!r}")
+                    tl.log(f"Scheduling proof task {info}")
 
-                proof_task = IvyProofTask(name)
-                if prepare_design is None:
-                    prepare_design = IvyPrepareDesign()
-                proof_task.depends_on(prepare_design)
+                SolverContext.solvers.dispatch_proof_task(task)
 
-                proof_task[tl.priority.JobPriorities].priority = (
-                    -App.data[name.name].dependency_order(),
-                )
-                # TODO proof_task[tl.priority.JobPriorities].priority = ...
-                # TODO priority sign sentinel task
-                proof_task.handle_error(proof_task_error_handler)
-                status_task.depends_on(proof_task)
-
-
-@dataclass
-class ProofStatusEvent(tl.TaskEvent):
-    name: IvyTaskName
-    status: Status
-
-
-class IvyProofTask(tl.Process):
-    def __init__(self, name: IvyTaskName):
-        self.filename = App.data[name.name].filename
-        super().__init__(
-            ["sby", "-f", f"{self.filename}.sby"],
-            cwd=App.work_dir / "tasks",
-        )
-        self.name = f"proof({name})"
-        self.proof_name = name
-        self[tl.LogContext].scope = str(name.name)
-
-    def on_cancel(self):
-        if self.parent and not self.parent.is_aborted:
-            tl.log_warning("Cancelled")
-        super().on_cancel()
-
-    async def on_run(self) -> None:
-        ProofStatusEvent(self.proof_name, "running").emit()
-        await super().on_run()
-
-    def on_exit(self, returncode: int) -> None:
-        sby_dir = App.work_dir / "tasks" / self.filename
-        try:
-            sby_status = (sby_dir / "status").read_text()
-        except FileNotFoundError:
-            sby_status = "ERROR"
-
-        sby_status = sby_status.split()[0]
-
-        status_map: dict[str, Status] = {
-            "PASS": "pass",
-            "FAIL": "fail",
-            "UNKNOWN": "unknown",
-            "ERROR": "error",
-        }
-
-        status = status_map.get(sby_status, "unknown")
-
-        try:
-            status_lines = (sby_dir / sby_status).read_text()
-        except FileNotFoundError:
-            pass
-        else:
-            tl.log(status_lines)
-
-        tl.log("Proof status:", color_status(status))
-        ProofStatusEvent(self.proof_name, status).emit()
+    status_task.depends_on(SolverContext.solvers)
 
 
 def proof_task_error_handler(err: BaseException):
-    if isinstance(err, tl.TaskFailed) and isinstance(err.task, IvyProofTask):
-        App.status_db.change_status(err.task.proof_name, "error", require=("running", "scheduled"))
+    if isinstance(err, tl.TaskFailed) and isinstance(err.task, IvySolver):
+        App.status_db.change_status(err.task.task_name, "error", require=("running", "scheduled"))
         tl.log_exception(err, raise_error=False)
         # TODO check whether we can de-schedule/abort any proof tasks with this status change
         return
-    if isinstance(err, tl.TaskCancelled) and isinstance(err.task, IvyProofTask):
-        App.status_db.change_status(
-            err.task.proof_name, "pending", require=("running", "scheduled")
-        )
+    if isinstance(err, tl.TaskCancelled) and isinstance(err.task, IvySolver):
+        App.status_db.change_status(err.task.task_name, "pending", require=("running", "scheduled"))
         # TODO check whether we can de-schedule/abort any proof tasks with this status change
         return
     if isinstance(err, tl.TaskCancelled):
@@ -483,6 +317,9 @@ def proof_event_handler(event: ProofStatusEvent):
         require = ("scheduled",)
     else:
         require = ("running",)
+
+    if event.status in ("pass", "fail"):
+        SolverContext.solvers.cancel_proof_tasks(event.name.name)
 
     failure = App.status_db.change_status(event.name, event.status, require=require)
     if failure:
