@@ -131,6 +131,8 @@ class IvyConfig(cfg.ConfigParser):
 
     script = cfg.StrSection(default="prep")
 
+    ivy_self_test = cfg.StrSection(default="")
+
 
 def parse_config() -> None:
     ivy_file = App.ivy_file

@@ -1,0 +1,75 @@
+[options]
+top top
+
+[read]
+read -sv test.svi
+
+[file test.svi]
+module top();
+
+    invariant A;
+        1;
+    endinvariant
+
+    invariant B;
+        1;
+    endinvariant
+
+    invariant C;
+        1;
+    endinvariant
+
+    proof prove_A;
+        assert invariant A;
+        solve with "dummy pass" priority -1;
+        solve with "sby smtbmc" priority 1;
+    endproof
+
+
+    automatic proof export_A;
+        export invariant A;
+    endproof
+
+    automatic proof prove_B;
+        assume invariant A;
+        assert invariant B;
+        solve with "dummy unknown" priority 1;
+        solve with "dummy fail" priority -1;
+        solve proof prove_A;
+    endproof
+
+    proof prove_B2;
+        assume proof prove_A;
+        assert invariant B;
+        solve with "dummy -r pass" priority 1;
+    endproof
+
+    solve proof prove_B2;
+
+    automatic proof prove_B3;
+        use proof export_A;
+        assert invariant B;
+        solve with "dummy pass" priority -1;
+    endproof
+
+    solve invariant C;
+
+endmodule
+
+[ivy_self_test]
+
+assert test.run('-f') == 0
+logfile = test.logfile()
+
+assert 'invariant A: pass' in logfile
+assert 'invariant B: pass' in logfile
+assert 'proof prove_A: pass' in logfile
+assert 'proof prove_B: fail' in logfile
+assert 'proof prove_B2: error' in logfile
+assert 'proof prove_B3: pass' in logfile
+assert 'invariant A: pass' in logfile
+assert 'invariant B: pass' in logfile
+assert 'proof prove_A: pass' in logfile
+assert 'proof prove_B: fail' in logfile
+assert 'proof prove_B2: error' in logfile
+assert 'proof prove_B3: pass' in logfile

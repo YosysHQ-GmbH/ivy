@@ -50,7 +50,9 @@ fixable = [
 ignore = ["E731"]
 
 [tool.pytest.ini_options]
-addopts = ["--import-mode=importlib"]
+addopts = ["--import-mode=importlib", "--ignore=tests/ivy"]
+
+testpaths = ["tests"]
 
 filterwarnings = [ # Remove this once https://github.com/pytest-dev/pytest-cov/issues/557 hits a pytest-cov release
     "error",

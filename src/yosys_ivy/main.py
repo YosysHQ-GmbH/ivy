@@ -3,11 +3,10 @@ from __future__ import annotations
 import io
 import json
 import os
+import pickle
 import shutil
 import traceback
-import pickle
 from pathlib import Path, PurePath
-from textwrap import dedent
 
 import yosys_mau.task_loop.job_server as job
 from yosys_mau import task_loop as tl
@@ -17,7 +16,7 @@ from yosys_ivy.design import Design
 
 from .config import App, arg_parser, parse_config
 from .data import IvyData, IvyProof, StatusKey, color_status
-from .solver import IvySolver, ProofStatusEvent, SolverContext, Solvers
+from .solver import ProofStatusEvent, SolverContext, Solvers
 from .status_db import IvyStatusDb
 
 
@@ -128,6 +127,9 @@ def setup_workdir(early_log: io.StringIO, setup: bool = False) -> None:
         (work_dir / "model").mkdir()
         (work_dir / "tasks").mkdir()
 
+    if App.config.ivy_self_test:
+        (work_dir / "self_test").write_text(App.config.ivy_self_test)
+
     if target:
         target.write(early_log.getvalue())
         tl.logging.start_logging(target)
@@ -144,11 +146,7 @@ def copy_source_files() -> None:
     ivy_file_dir = App.ivy_file.parent
     target_src_dir = App.work_dir / "src"
 
-    try:
-        target_src_dir.mkdir()
-    except FileExistsError:
-        tl.log_debug("Reusing existing 'src' directory")
-        return
+    target_src_dir.mkdir()
 
     filenames = App.filenames
 
@@ -198,18 +196,19 @@ class IvyExportJson(tl.Process):
     async def on_prepare(self) -> None:
         tl.LogContext.scope = self.name
 
-        script = dedent(
-            f"""\
-                # running in {self.cwd}
-                {App.config.read}
-                verific -ivy-json-export ../ivy_export.json -top {App.config.options.top}
-                verific -assert-all-invariants
-                verific -delete-all-proofs
-                verific -import {App.config.options.top}
-                hierarchy -top {App.config.options.top}
-                {App.config.script}
-                write_rtlil ../model/export.il
-            """
+        script = "\n".join(
+            [
+                f"# running in {self.cwd}",
+                App.config.read,
+                f"verific -ivy-json-export ../ivy_export.json -top {App.config.options.top}",
+                "verific -assert-all-invariants",
+                "verific -delete-all-proofs",
+                f"verific -import {App.config.options.top}",
+                f"hierarchy -top {App.config.options.top}",
+                App.config.script,
+                "write_rtlil ../model/export.il",
+                "",
+            ]
         )
         (App.work_dir / "ivy_export.ys").write_text(script)
 
@@ -297,21 +296,6 @@ def run_command() -> None:
     status_task.depends_on(SolverContext.solvers)
 
 
-def proof_task_error_handler(err: BaseException):
-    if isinstance(err, tl.TaskFailed) and isinstance(err.task, IvySolver):
-        App.status_db.change_status(err.task.task_name, "error", require=("running", "scheduled"))
-        tl.log_exception(err, raise_error=False)
-        # TODO check whether we can de-schedule/abort any proof tasks with this status change
-        return
-    if isinstance(err, tl.TaskCancelled) and isinstance(err.task, IvySolver):
-        App.status_db.change_status(err.task.task_name, "pending", require=("running", "scheduled"))
-        # TODO check whether we can de-schedule/abort any proof tasks with this status change
-        return
-    if isinstance(err, tl.TaskCancelled):
-        return
-    tl.log_exception(err)
-
-
 def proof_event_handler(event: ProofStatusEvent):
     if event.status == "running":
         require = ("scheduled",)
@@ -319,7 +303,7 @@ def proof_event_handler(event: ProofStatusEvent):
         require = ("running",)
 
     if event.status in ("pass", "fail"):
-        SolverContext.solvers.cancel_proof_tasks(event.name.name)
+        SolverContext.solvers.cancel_proof_tasks(event.name.name, already_solved=True)
 
     failure = App.status_db.change_status(event.name, event.status, require=require)
     if failure:

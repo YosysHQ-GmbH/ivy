@@ -80,12 +80,6 @@ class IvyName:
     def from_json(cls, name: list[str]) -> IvyName:
         return cls(tuple(name))
 
-    def local(self, name: str | list[str]) -> IvyName:
-        if isinstance(name, list):
-            return IvyName(tuple(name))
-
-        return IvyName((*self.parts[:-1], name))
-
     @property
     def filename(self) -> str:
         joined = ".".join(self.parts)
@@ -233,7 +227,7 @@ class IvyProofItem:
     name: IvyName
 
     def __init__(self, proof: IvyProof, json_data: Any):
-        object.__setattr__(self, "name", proof.name.local(json_data["name"]))
+        object.__setattr__(self, "name", IvyName.from_json(json_data["name"]))
         if self in proof.items:
             tl.log_error("duplicate item in proof")  # TODO better error message
         proof.items.add(self)
@@ -287,14 +281,6 @@ class IvyAssert(IvyProofItem):
         object.__setattr__(self, "local", json_data.get("local", False))
         super().__init__(proof, json_data)
         proof.asserts.add(self)
-
-    def as_assume(self, cross: bool):
-        assume = object.__new__(IvyAssume)
-        object.__setattr__(assume, "name", self.name)
-        object.__setattr__(assume, "export", False)
-        object.__setattr__(assume, "type", "invariant")
-        object.__setattr__(assume, "cross", cross)
-        return assume
 
 
 @dataclass(frozen=True)

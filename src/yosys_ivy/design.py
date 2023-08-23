@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from textwrap import dedent
-
 from yosys_mau import task_loop as tl
 
 from .config import App
@@ -20,13 +18,14 @@ class PrepareDesign(tl.Process):
         # running it for compatible proof tasks. It would also be possible to reuse the SBY prep
         # step across multiple proof tasks when they share the same solver configuration.
 
-        script = dedent(
-            f"""\
-                # running in {self.cwd}
-                read_rtlil export.il
-                {App.config.script}
-                write_rtlil design.il
-            """
+        script = "\n".join(
+            [
+                f"# running in {self.cwd}",
+                "read_rtlil export.il",
+                App.config.script,
+                "write_rtlil design.il",
+                "",
+            ]
         )
         (App.work_dir / "model" / "design.ys").write_text(script)
 

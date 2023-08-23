@@ -1,0 +1,17 @@
+[options]
+top top
+
+[read]
+read -sv source_files.svi
+
+[files]
+source_files.svi
+
+[ivy_self_test]
+
+assert test.run('-f') == 0
+logfile = test.logfile()
+
+assert 'invariant trivial: pass' in logfile
+assert 'proof prove_trivial: pass' in logfile
+

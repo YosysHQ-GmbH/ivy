@@ -1,10 +1,8 @@
 from __future__ import annotations
-import argparse
 
-import asyncio
-from pathlib import Path
+import argparse
 import shlex
-from textwrap import dedent
+from pathlib import Path
 from typing import Any
 
 import yosys_mau.task_loop as tl
@@ -14,7 +12,6 @@ from yosys_ivy.config import App
 from yosys_ivy.data import IvyName, Status
 from yosys_ivy.design import DesignContext
 from yosys_ivy.solver import IvySolver
-
 
 argument_parser = argparse.ArgumentParser(prog="sby", add_help=False)
 argument_parser.error = tl.log_error  # type: ignore
@@ -64,41 +61,29 @@ class IvySby(IvySolver):
         # same design should give a speedup
 
         self.sby_file.write_text(
-            dedent(
-                """\
-                # running in {sby_dir}
-                [options]
-                mode prove
-                depth {depth}
-                assume_early off
-
-                [engines]
-                {engine}
-                [script]
-                read_rtlil ../../../model/design.il
-                uniquify; hierarchy -nokeep_asserts
-                {setattrs}
-                select -set used */a:ivy_assert */a:ivy_assume */a:ivy_cross_assume
-                chformal -remove */a:ivy_property @used %d
-                chformal -assert2assume */a:ivy_assume */a:ivy_cross_assume
-                chformal -delay 1 */a:ivy_cross_assume
-                """
-            ).format(
-                sby_dir=self.sby_dir,
-                engine=shlex.join(self.engine),
-                depth=self.depth,
-                top=App.config.options.top,
-                setattrs=setattrs,
+            "\n".join(
+                [
+                    f"# running in {self.sby_dir}",
+                    "[options]",
+                    "mode prove",
+                    f"depth {self.depth}",
+                    "assume_early off",
+                    "",
+                    "[engines]",
+                    shlex.join(self.engine),
+                    "[script]",
+                    "read_rtlil ../../../model/design.il",
+                    "uniquify; hierarchy -nokeep_asserts",
+                    setattrs,
+                    "select -set used */a:ivy_assert */a:ivy_assume */a:ivy_cross_assume",
+                    "chformal -remove */a:ivy_property @used %d",
+                    "chformal -assert2assume */a:ivy_assume */a:ivy_cross_assume",
+                    "chformal -delay 1 */a:ivy_cross_assume",
+                    "",
+                ]
             )
         )
         tl.log_debug(f"wrote sby file {str(self.sby_file)!r}")
-
-        if "sleep" in self.solver_args:  # XXX
-            try:
-                await asyncio.sleep(2)
-            except asyncio.CancelledError:
-                tl.log_warning("cancelled")
-                raise
 
         self.sby_proc = tl.Process(
             ["sby", "-f", f"{self.filename}.sby"],

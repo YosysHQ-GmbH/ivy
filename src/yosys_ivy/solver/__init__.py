@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import abc
-import asyncio
 from collections import defaultdict
 from dataclasses import dataclass
 from typing import Callable
@@ -10,7 +9,7 @@ import yosys_mau.task_loop as tl
 from yosys_mau.stable_set import StableSet
 
 from ..config import App
-from ..data import IvyEntity, IvyName, IvyTaskName, Status, color_status
+from ..data import IvyEntity, IvyName, IvyTaskName, Status
 
 
 def _register_solvers():
@@ -29,6 +28,8 @@ class IvySolver(tl.Task, abc.ABC):
     filename: str
     entity: IvyEntity
     priority: int
+    solver_finished: bool
+    already_solved: bool
 
     def __init__(self, task_name: IvyTaskName, solver_args: str):
         super().__init__(name=f"{task_name.name}({task_name.solver!r})")
@@ -37,6 +38,9 @@ class IvySolver(tl.Task, abc.ABC):
         self.solver_args = solver_args
         self.filename = App.data.task_filenames[task_name]
         self.entity = App.data[task_name.name]
+        self.solver_finished = False
+        self.already_solved = False
+        self.discard = False
         self.priority = self.entity.solve_with[task_name.solver] or 0
         with self.as_current_task():
             tl.LogContext.scope = App.data.task_info[task_name]
@@ -49,15 +53,13 @@ class IvySolver(tl.Task, abc.ABC):
     async def on_run(self):
         ProofStatusEvent(self.task_name, "running").emit()
 
-        status = "error"
-        try:
-            status = await self.on_solve()
-        except asyncio.CancelledError:
-            status = "pending"
-        finally:
-            if status != "pending":
-                tl.log("Proof status:", color_status(status))
-            ProofStatusEvent(self.task_name, status).emit()
+        status = await self.on_solve()
+        self.solver_finished = True
+        ProofStatusEvent(self.task_name, status).emit()
+
+    def cancel(self, already_solved: bool = False):
+        self.already_solved |= already_solved
+        super().cancel()
 
     @abc.abstractmethod
     async def on_solve(self) -> Status:
@@ -103,6 +105,7 @@ class Solvers(tl.TaskGroup):
                         sentinel = self._priority_sentinels[name.name]
                     else:
                         sentinel = self._priority_sentinels[name.name] = tl.Task()
+                        sentinel.discard = False
                         sentinel.set_error_handler(None, lambda err: None)
                         for negative_task in self._negative_priority_tasks[name.name]:
                             negative_task.depends_on(sentinel)
@@ -114,6 +117,7 @@ class Solvers(tl.TaskGroup):
                         sentinel = self._priority_sentinels[name.name]
                     else:
                         sentinel = self._priority_sentinels[name.name] = tl.Task()
+                        sentinel.discard = False
                         sentinel.set_error_handler(None, lambda err: None)
                         for positive_task in self._positive_priority_tasks[name.name]:
                             sentinel.depends_on(positive_task)
@@ -125,14 +129,23 @@ class Solvers(tl.TaskGroup):
             return task
 
     def _error_handler(self, task: IvySolver, err: BaseException) -> None:
+        if isinstance(err, tl.TaskFailed) and isinstance(err.task, IvySolver):
+            tl.log_exception(err, raise_error=False)
+            ProofStatusEvent(task.task_name, "error").emit()
+            return
+        if isinstance(err, tl.TaskCancelled) and isinstance(err.task, IvySolver):
+            if not err.task.already_solved:
+                ProofStatusEvent(task.task_name, "pending").emit()
+            return
         if isinstance(err, tl.TaskCancelled):
             return
-        raise err
+        tl.log_exception(err)
 
-    def cancel_proof_tasks(self, name: IvyName) -> None:
+    def cancel_proof_tasks(self, name: IvyName, already_solved: bool) -> None:
         with self.as_current_task():
             for task in self._tasks[name]:
-                task.cancel()
+                if not task.solver_finished:
+                    task.cancel(already_solved=already_solved)
 
             del self._tasks[name]
 

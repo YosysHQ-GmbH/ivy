@@ -1,0 +1,28 @@
+[options]
+top top
+
+[read]
+read -sv test.svi
+
+[file test.svi]
+module top();
+
+    invariant trivial;
+        1;
+    endinvariant
+
+    automatic proof prove_trivial;
+        assert invariant trivial;
+    endproof
+endmodule
+
+[ivy_self_test]
+
+assert test.run('-f', 'setup') == 0
+assert 'pending' in test.capture_status()
+assert test.run('prove') == 0
+
+(test.work_dir / 'ivy_data.pickle').unlink()
+
+assert test.run('prove') == 0
+assert 'pass' in test.capture_status()

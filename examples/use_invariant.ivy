@@ -16,24 +16,16 @@ module top;
         a;
     endinvariant
 
-`ifdef inv_always_a
-    always @(*) `inv_always_a (a);
-`endif
-
     invariant always_b;
         b;
     endinvariant
 
-`ifdef inv_always_b
-    always @(*) `inv_always_b (b);
-`endif
-
-    automatic proof prove_always_a;
-        assert invariant always_a;
-    endproof
-
-    automatic proof prove_always_b;
-        assume invariant always_a;
+    proof b_via_a;
         assert invariant always_b;
+        solve with "dummy unknown -d 1" priority 1;
+        solve with "dummy fail -d 4" priority 0;
+        solve with "dummy pass -d 2" priority -1;
     endproof
+
+    solve proof b_via_a;
 endmodule

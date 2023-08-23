@@ -1,0 +1,49 @@
+[options]
+top top
+
+[read]
+read -sv test.svi
+
+[file test.svi]
+module top(input a, b, c);
+
+    wire x = a & b;
+    wire y = b & c;
+    wire z = x & y;
+
+    invariant A; a; endinvariant
+    invariant B; b; endinvariant
+    invariant C; c; endinvariant
+    invariant X; x; endinvariant
+    invariant Y; y; endinvariant
+    invariant Z; z; endinvariant
+
+    automatic proof prove_A;
+        export assert invariant A;
+        solve with "dummy pass";
+    endproof
+
+    automatic proof prove_B;
+        assert invariant B;
+        solve with "dummy pass";
+    endproof
+
+    automatic proof prove_C;
+        assert invariant C;
+        solve with "dummy pass";
+    endproof
+
+    automatic proof prove_X;
+        use proof prove_A;
+        assume invariant B;
+        assert invariant X;
+        solve with "sby smtbmc";
+    endproof
+
+
+endmodule
+
+[ivy_self_test]
+
+assert test.run('-f') == 0
+logfile = test.logfile()

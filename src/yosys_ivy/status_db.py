@@ -14,7 +14,7 @@ from .data import IvyName, IvyTaskName, Status, status_or_equivalent
 Fn = TypeVar("Fn", bound=Callable[..., Any])
 
 
-def _transaction(method: Fn) -> Fn:
+def transaction(method: Fn) -> Fn:
     @wraps(method)
     def wrapper(self: IvyStatusDb, *args: Any, **kwargs: Any) -> Any:
         try:
@@ -47,8 +47,8 @@ def _transaction(method: Fn) -> Fn:
 
 
 class IvyStatusDb:
-    def __init__(self, path: Path, setup: bool = False):
-        self.db = sqlite3.connect(path, isolation_level=None)
+    def __init__(self, path: Path, setup: bool = False, timeout: float = 5.0):
+        self.db = sqlite3.connect(path, isolation_level=None, timeout=timeout)
         self.db.row_factory = sqlite3.Row
         self.db.execute("PRAGMA journal_mode=WAL")
         self.db.execute("PRAGMA synchronous=0")
@@ -56,7 +56,7 @@ class IvyStatusDb:
         if setup:
             self._setup()
 
-    @_transaction
+    @transaction
     def _setup(self):
         self.db.execute(
             """
@@ -69,7 +69,7 @@ class IvyStatusDb:
             """
         )
 
-    @_transaction
+    @transaction
     def full_status(self) -> dict[IvyTaskName, Status]:
         cursor = self.db.execute("""SELECT name, solver, status FROM proof_status""")
         return {
@@ -85,7 +85,7 @@ class IvyStatusDb:
 
         return {name: status_or_equivalent(*statuses) for name, statuses in grouped.items()}
 
-    @_transaction
+    @transaction
     def status(self, names: Collection[IvyName]) -> dict[IvyTaskName, Status]:
         cursor = self.db.execute(
             """
@@ -99,7 +99,7 @@ class IvyStatusDb:
             for name, solver, status in cursor
         }
 
-    @_transaction
+    @transaction
     def initialize_status(self, names: Collection[IvyTaskName]) -> None:
         self.db.executemany(
             """
@@ -114,7 +114,7 @@ class IvyStatusDb:
     ) -> Status | None:
         return self.change_status_many([name], new_status, require).get(name, None)
 
-    @_transaction
+    @transaction
     def change_status_many(
         self,
         names: Iterable[IvyTaskName],
