@@ -24,7 +24,7 @@ module top;
         assert invariant always_b;
         solve with "dummy unknown -d 1" priority 1;
         solve with "dummy fail -d 4" priority 0;
-        solve with "dummy pass -d 2" priority -1;
+        solve with "dummy pass -d 2" priority (-1);
     endproof
 
     solve proof b_via_a;

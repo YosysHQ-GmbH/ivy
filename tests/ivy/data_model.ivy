@@ -21,7 +21,7 @@ module top();
 
     proof prove_A;
         assert invariant A;
-        solve with "dummy pass" priority -1;
+        solve with "dummy pass" priority (-1);
         solve with "sby smtbmc" priority 1;
     endproof
 
@@ -34,7 +34,7 @@ module top();
         assume invariant A;
         assert invariant B;
         solve with "dummy unknown" priority 1;
-        solve with "dummy fail" priority -1;
+        solve with "dummy fail" priority (-1);
         solve proof prove_A;
     endproof
 
@@ -49,7 +49,7 @@ module top();
     automatic proof prove_B3;
         use proof export_A;
         assert invariant B;
-        solve with "dummy pass" priority -1;
+        solve with "dummy pass" priority (-1);
     endproof
 
     solve invariant C;

@@ -200,6 +200,8 @@ class IvyExportJson(tl.Process):
             [
                 f"# running in {self.cwd}",
                 App.config.read,
+                f"verific -static -top {App.config.options.top}",
+                "verific -unroll",
                 f"verific -ivy-json-export ../ivy_export.json -top {App.config.options.top}",
                 "verific -assert-all-invariants",
                 "verific -delete-all-proofs",
@@ -297,7 +299,7 @@ def run_command() -> None:
 
 
 def proof_event_handler(event: ProofStatusEvent):
-    if event.status == "abandoned":
+    if event.status in ("abandoned", "pending"):
         require = ("pending", "scheduled", "running")
     elif event.status == "running":
         require = ("scheduled",)
