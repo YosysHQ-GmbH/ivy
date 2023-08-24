@@ -22,6 +22,7 @@ Status = Literal[
     "fail",  # counter example to invariant found
     "error",  # error during execution
     "unknown",  # finished without proving the invariant or finding a counter example
+    "abandoned",  # was scheduled or running but is not needed anymore
     "unreachable",  # cycle in the depe
 ]
 
@@ -30,6 +31,7 @@ NodeType = Literal["and", "or"]
 
 status_list: list[Status] = [
     "unreachable",
+    "abandoned",
     "error",
     "fail",
     "unknown",
@@ -48,6 +50,7 @@ status_colors = {
     "unreachable": "red",
     "fail": "red",
     "pass": "green",
+    "abandoned": "magenta",
 }
 
 
@@ -665,6 +668,7 @@ class IvyStatusGraph:
     order_list: list[StatusKey]
 
     cross_order_map: list[int | None]
+    cross_order_inv_map: list[int | None]
     cross_indices: list[int]
 
     non_entity_sources: StableSet[StatusKey]
@@ -713,6 +717,11 @@ class IvyStatusGraph:
             for key in self.order_list
         ]
 
+        self.cross_order_inv_map = [
+            self.order.get(StatusKey("entity", key.name)) if key.type == "cross" else None
+            for key in self.order_list
+        ]
+
         self.cross_indices = [i for i, key in enumerate(self.order_list) if key.type == "cross"]
 
         self.out_edges_list = [
@@ -730,6 +739,10 @@ class IvyStatusMap:
     status_graph: IvyStatusGraph
 
     current_status: list[Status]
+    current_useful: list[bool]
+
+    useful_dirty: list[bool]
+    useful_dirty_queue: list[int]
 
     dirty: list[bool]
     dirty_queue: list[int]
@@ -741,9 +754,13 @@ class IvyStatusMap:
         self.status_graph = status_graph
 
         self.current_status = ["unreachable"] * len(self.status_graph.order)
+        self.current_useful = [False] * len(self.status_graph.order)
 
         self.dirty_queue = []
         self.dirty = [False] * len(self.current_status)
+
+        self.useful_dirty_queue = []
+        self.useful_dirty = [False] * len(self.current_status)
 
         self.cross_dirty = [False] * len(self.current_status)
         self.cross_dirty_map = [None] * len(self.current_status)
@@ -764,6 +781,9 @@ class IvyStatusMap:
     def status(self, key: StatusKey) -> Status:
         return self._status(self.status_graph.order[key])
 
+    def useful(self, key: StatusKey) -> bool:
+        return self.current_useful[self.status_graph.order[key]]
+
     def _status(self, index: int) -> Status:
         return self.current_status[index]
 
@@ -773,6 +793,13 @@ class IvyStatusMap:
 
     def _pop_dirty(self) -> int:
         return heapq.heappop(self.dirty_queue)
+
+    def _push_useful_dirty(self, index: int):
+        self.useful_dirty[index] = True
+        heapq.heappush(self.useful_dirty_queue, -index)
+
+    def _pop_useful_dirty(self) -> int:
+        return -heapq.heappop(self.useful_dirty_queue)
 
     def set_status(self, key: StatusKey, status: Status):
         index = self.status_graph.order[key]
@@ -791,6 +818,26 @@ class IvyStatusMap:
         for out_edge in self.status_graph.out_edges_list[index]:
             if not self.dirty[out_edge]:
                 self._push_dirty(out_edge)
+
+    def set_useful(self, key: StatusKey):
+        index = self.status_graph.order[key]
+        self._set_useful(index)
+
+    def _set_useful(self, index: int):
+        if self.current_useful[index]:
+            return
+        if self._status(index) in ("pass", "fail"):
+            return
+
+        self.current_useful[index] = True
+        cross_edge = self.status_graph.cross_order_inv_map[index]
+        if cross_edge is not None:
+            if not self.useful_dirty[cross_edge]:
+                self._push_useful_dirty(cross_edge)
+
+        for in_edge in self.status_graph.in_edges_list[index]:
+            if not self.useful_dirty[in_edge]:
+                self._push_useful_dirty(in_edge)
 
     def iterate(self):
         import time
@@ -818,6 +865,25 @@ class IvyStatusMap:
                 self._set_status(cross, self._status(index))
             self.cross_dirty_list = []
         tl.log_debug("took", time.time() - start, "seconds")
+
+    def iterate_useful(self):
+        import time
+
+        start = time.time()
+        steps = 0
+        while self.useful_dirty_queue:
+            steps += 1
+            index = self._pop_useful_dirty()
+            self.useful_dirty[index] = False
+
+            self._set_useful(index)
+        tl.log_debug(f"iteration (useful) took {steps} steps")
+        tl.log_debug("took", time.time() - start, "seconds")
+
+    def mark_sinks_as_useful(self):
+        for sink in self.status_graph.sinks:
+            if sink.type != "proof":
+                self.set_useful(sink)
 
     def unreachable_sinks(self) -> Iterator[StatusKey]:
         for sink in self.status_graph.sinks:

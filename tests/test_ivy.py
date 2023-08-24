@@ -1,7 +1,7 @@
-from dataclasses import dataclass
 import subprocess
 import sys
 import tempfile
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
@@ -10,7 +10,7 @@ from yosys_ivy.data import IvyName, IvyTaskName
 from yosys_ivy.sccs import find_sccs
 from yosys_ivy.status_db import IvyStatusDb, transaction
 from yosys_mau.config_parser import split_into_sections
-from yosys_mau.source_str import source_map, read_file
+from yosys_mau.source_str import read_file, source_map
 
 
 def test_find_sccs():

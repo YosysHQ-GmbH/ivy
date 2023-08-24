@@ -47,11 +47,15 @@ def transaction(method: Fn) -> Fn:
 
 
 class IvyStatusDb:
+    status_ticks: int
+
     def __init__(self, path: Path, setup: bool = False, timeout: float = 5.0):
         self.db = sqlite3.connect(path, isolation_level=None, timeout=timeout)
         self.db.row_factory = sqlite3.Row
         self.db.execute("PRAGMA journal_mode=WAL")
         self.db.execute("PRAGMA synchronous=0")
+
+        self.status_ticks = 0
 
         if setup:
             self._setup()

@@ -297,13 +297,12 @@ def run_command() -> None:
 
 
 def proof_event_handler(event: ProofStatusEvent):
-    if event.status == "running":
+    if event.status == "abandoned":
+        require = ("pending", "scheduled", "running")
+    elif event.status == "running":
         require = ("scheduled",)
     else:
         require = ("running",)
-
-    if event.status in ("pass", "fail"):
-        SolverContext.solvers.cancel_proof_tasks(event.name.name, already_solved=True)
 
     failure = App.status_db.change_status(event.name, event.status, require=require)
     if failure:
@@ -314,7 +313,51 @@ def proof_event_handler(event: ProofStatusEvent):
             failure,
             raise_error=False,
         )
+
+    if event.status in ("pass", "fail"):
+        SolverContext.solvers.cancel_proof_tasks(
+            event.name.name, already_solved=True, abandoned=False
+        )
+
+    if event.status in ("pass", "fail"):
+        status_ticks = App.status_db.status_ticks
+
+        async def background():
+            check_useless_tasks(status_ticks)
+
+        tl.current_task().background(background)
     # TODO check whether we can de-schedule/abort any proof tasks with this status change
+
+
+def check_useless_tasks(status_ticks: int):
+    if App.status_db.status_ticks > status_ticks:
+        return
+    App.status_db.status_ticks += 1
+
+    # TODO debounce this so when many tasks finish quickly we don't spend too much time recomputing
+    # the status graph again and again
+    full_status = App.status_db.reduced_status()
+
+    computed_status = App.data.status_map()
+
+    for key in computed_status.status_graph.tasks:
+        computed_status.set_status(key, full_status.get(key.name, "pending"))
+
+    computed_status.iterate()
+
+    computed_status.mark_sinks_as_useful()
+
+    computed_status.iterate_useful()
+
+    for task in computed_status.status_graph.tasks:
+        if not computed_status.useful(task) and computed_status.status(task) in (
+            "pending",
+            "scheduled",
+            "running",
+        ):
+            SolverContext.solvers.cancel_proof_tasks(
+                task.name, already_solved=False, abandoned=True
+            )
 
 
 def run_status_task():

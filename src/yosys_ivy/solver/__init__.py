@@ -30,6 +30,7 @@ class IvySolver(tl.Task, abc.ABC):
     priority: int
     solver_finished: bool
     already_solved: bool
+    abandoned: bool
 
     def __init__(self, task_name: IvyTaskName, solver_args: str):
         super().__init__(name=f"{task_name.name}({task_name.solver!r})")
@@ -40,6 +41,7 @@ class IvySolver(tl.Task, abc.ABC):
         self.entity = App.data[task_name.name]
         self.solver_finished = False
         self.already_solved = False
+        self.abandoned = False
         self.discard = False
         self.priority = self.entity.solve_with[task_name.solver] or 0
         with self.as_current_task():
@@ -57,8 +59,13 @@ class IvySolver(tl.Task, abc.ABC):
         self.solver_finished = True
         ProofStatusEvent(self.task_name, status).emit()
 
-    def cancel(self, already_solved: bool = False):
+    def cancel(self, already_solved: bool = False, abandoned: bool = False):
         self.already_solved |= already_solved
+        if not self.already_solved:
+            if not self.abandoned:
+                self.abandoned = True
+                with self.as_current_task():
+                    tl.log("abandoning redundant proof task")
         super().cancel()
 
     @abc.abstractmethod
@@ -135,18 +142,20 @@ class Solvers(tl.TaskGroup):
             return
         if isinstance(err, tl.TaskCancelled) and isinstance(err.task, IvySolver):
             if not err.task.already_solved:
-                ProofStatusEvent(task.task_name, "pending").emit()
+                if err.task.abandoned:
+                    ProofStatusEvent(task.task_name, "abandoned").emit()
+                else:
+                    ProofStatusEvent(task.task_name, "pending").emit()
             return
         if isinstance(err, tl.TaskCancelled):
             return
         tl.log_exception(err)
 
-    def cancel_proof_tasks(self, name: IvyName, already_solved: bool) -> None:
+    def cancel_proof_tasks(self, name: IvyName, already_solved: bool, abandoned: bool) -> None:
         with self.as_current_task():
             for task in self._tasks[name]:
-                if not task.solver_finished:
-                    task.cancel(already_solved=already_solved)
-
+                if not task.solver_finished and not task.abandoned:
+                    task.cancel(already_solved=already_solved, abandoned=abandoned)
             del self._tasks[name]
 
 
