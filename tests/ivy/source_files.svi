@@ -1,0 +1,10 @@
+module top();
+
+    invariant trivial;
+        1;
+    endinvariant
+
+    automatic proof prove_trivial;
+        assert invariant trivial;
+    endproof
+endmodule
