@@ -165,11 +165,15 @@ class IvyEntity(abc.ABC):
     solve_with: dict[str, int | None]
     solve_order: dict[str, int]
 
-    def __init__(self, ivy_data: IvyData, json_data: Any):
+    def __init__(self, ivy_data: IvyData, json_data: Any = None, name: IvyName | None = None):
         self.ivy_data = ivy_data
         self.json_data = json_data
-        self.name = IvyName(tuple(json_data["name"]))
-        self.src_loc = self.json_data["srcloc"]
+        if self.json_data is not None:
+            self.name = IvyName(tuple(json_data["name"]))
+            self.src_loc = self.json_data["srcloc"]
+        else:
+            assert name is not None
+            self.name = name
 
         self.solve = False
         self.default_priority = None
@@ -277,10 +281,13 @@ class IvyAssume(IvyProofItem):
 
 @dataclass(frozen=True)
 class IvyAssert(IvyProofItem):
+    type: IvyType
     local: bool
 
     def __init__(self, proof: IvyProof, json_data: Any):
-        assert json_data.get("type", "invariant") == "invariant"
+        type = json_data["type"]
+        assert type in ("invariant", "proof", "sequence", "property")
+        object.__setattr__(self, "type", type)
         object.__setattr__(self, "local", json_data.get("local", False))
         super().__init__(proof, json_data)
         proof.asserts.add(self)
@@ -505,11 +512,37 @@ class IvyInvariant(IvyEntity):
 
 
 @dataclass
+class IvyProperty(IvyEntity):
+    type = "property"
+
+    def __init__(self, ivy_data: IvyData, name: IvyName):
+        super().__init__(ivy_data, name=name)
+        ivy_data.properties.append(self)
+
+    def combine_status(self, *status: Status) -> Status:
+        return status_or(*status)
+
+
+@dataclass
+class IvySequence(IvyEntity):
+    type = "sequence"
+
+    def __init__(self, ivy_data: IvyData, name: IvyName):
+        super().__init__(ivy_data, name=name)
+        ivy_data.sequences.append(self)
+
+    def combine_status(self, *status: Status) -> Status:
+        return status_or(*status)
+
+
+@dataclass
 class IvyData:
     json_data: Any = field(repr=False)
 
     proofs: list[IvyProof]
     invariants: list[IvyInvariant]
+    properties: list[IvyProperty]
+    sequences: list[IvySequence]
 
     entities: dict[IvyName, IvyEntity]
 
@@ -530,6 +563,8 @@ class IvyData:
         self.proofs = []
         self.invariants = []
         self.entities = {}
+        self.properties = []
+        self.sequences = []
         self.solves = StableSet()
 
         self.filenames = set()
@@ -542,6 +577,17 @@ class IvyData:
 
         for solve_data in json_data["solve"]:
             IvyModuleSolve(self, solve_data)
+
+        # Create IvyEntities for referenced properties/sequences
+        for proof in self.proofs:
+            for proof_assert in proof.asserts:
+                if (
+                    proof_assert.type in ("sequence", "property")
+                    and proof_assert.name not in self.entities
+                ):
+                    {"sequence": IvySequence, "property": IvyProperty}[proof_assert.type](
+                        self, proof_assert.name
+                    )
 
         # TODO add all referenced sequences and properties so we can list them and store associated
         # data

@@ -202,6 +202,7 @@ class IvyExportJson(tl.Process):
                 App.config.read,
                 f"verific -static -top {App.config.options.top}",
                 "verific -unroll",
+                "verific -assert-used-properties-and-sequences",
                 f"verific -ivy-json-export ../ivy_export.json -top {App.config.options.top}",
                 "verific -assert-all-invariants",
                 "verific -delete-all-proofs",
