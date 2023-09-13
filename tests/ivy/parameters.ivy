@@ -29,8 +29,6 @@ module top(input clk, input a, input b);
     solve proof same_proof(x3, '0);
     solve proof same_proof(x4, a);
 
-    solve invariant is_a(x4);
-
 endmodule
 
 [ivy_self_test]

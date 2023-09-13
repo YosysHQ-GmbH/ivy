@@ -65,7 +65,6 @@ state transitions.
     solve with "<solver>" [priority <int>];
 endproof
 
-solve invariant|sequence|property <name>(...);
 solve proof <name>(...) [with "<solver>"] [priority <int>];
 ```
 

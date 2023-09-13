@@ -51,8 +51,6 @@ module top(input clk);
         solve with "dummy pass" priority (-1);
     endproof
 
-    solve invariant C;
-
 endmodule
 
 [ivy_self_test]
