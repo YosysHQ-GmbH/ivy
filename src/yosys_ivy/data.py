@@ -86,7 +86,10 @@ class IvyName:
 
     @property
     def filename(self) -> str:
-        joined = ".".join(self.parts)
+        str_parts = list(self.parts)
+        if self.data is not None:
+            str_parts[-1] = self.data.orig_names.get(self, str_parts[-1])
+        joined = ".".join(str_parts)
         return re.sub(r"[^a-zA-Z0-9_.]|^[.]", "_", joined) or "unknown"
 
     @property
