@@ -6,23 +6,57 @@ read -sv test.svi
 
 [file test.svi]
 module top(input clk, input en, input a, input b, output reg y);
+    default clocking default_clk @ (posedge clk);
+    endclocking
 
     always @(posedge clk)
         if (en)
             y <= a ^ b;
 
+    // Invariant expressed using $future_ff
     invariant y_def(condition);
-        condition -> $future_ff(y) == a ^ b;
+        condition ? $future_ff(y) == a ^ b : $steady_ff(y);
     endinvariant
 
+    // Make the global clock available for use in temporal operators.
+    (* gclk *) wire gclk;
 
-    automatic proof show_y_def_unconditional;
-        assert invariant y_def('1);
-    endproof;
+    // Invariant expressed using SVA temporal operators
+    invariant y_def_alt(condition);
+        @(posedge clk)
 
-    automatic proof show_y_def;
-        assert invariant y_def(en);
-    endproof;
+        // TODO make the clocking used for the invariant the implicit clock for
+        // contained temporal operators so that the module level default
+        // clocking is not needed
+
+        disable iff (
+            $changed(0) // Disable up to and including the first clk edge
+        )
+        // Check that y has values corresponding to the sampled values after
+        // every following clock edge
+        $past(condition) ? y == $past(a ^ b) : $stable(y);
+        // Check that y doesn't change when the clock isn't active
+        else y == $past(y,,, @(posedge gclk));
+    endinvariant
+
+    proof show_y_def(condition);
+        assert invariant y_def(condition);
+        solve with "sby --multiclock";
+    endproof
+
+
+    proof show_y_def_alt(condition);
+        assert invariant y_def_alt(condition);
+        solve with "sby --multiclock";
+    endproof
+
+    proof show_y(condition);
+        solve proof show_y_def(condition);
+        solve proof show_y_def_alt(condition);
+    endproof
+
+    solve proof show_y('1);
+    solve proof show_y(en);
 
 endmodule
 
@@ -30,7 +64,11 @@ endmodule
 
 assert test.run('-f') == 0
 logfile = test.logfile()
+assert "invariant y_def_alt(.condition(1'b1)): fail" in logfile
+assert "invariant y_def_alt(.condition(en)): pass" in logfile
 assert "invariant y_def(.condition(1'b1)): fail" in logfile
 assert "invariant y_def(.condition(en)): pass" in logfile
-assert "proof show_y_def: pass" in logfile
-assert "proof show_y_def_unconditional: fail" in logfile
+assert "proof show_y_def_alt(.condition(1'b1)): fail" in logfile
+assert "proof show_y_def_alt(.condition(en)): pass" in logfile
+assert "proof show_y_def(.condition(1'b1)): fail" in logfile
+assert "proof show_y_def(.condition(en)): pass" in logfile
