@@ -16,6 +16,7 @@ from yosys_ivy.solver import IvySolver
 argument_parser = argparse.ArgumentParser(prog="sby", add_help=False)
 argument_parser.error = tl.log_error  # type: ignore
 argument_parser.add_argument("-d", "--depth", type=int, default=5)
+argument_parser.add_argument("-m", "--multiclock", action="store_true")
 
 
 class IvySby(IvySolver):
@@ -25,6 +26,7 @@ class IvySby(IvySolver):
 
     engine: list[str]
     depth: int
+    multiclock: bool
 
     def __init__(self, *args: Any, **kwargs: Any):
         super().__init__(*args, **kwargs)
@@ -37,6 +39,9 @@ class IvySby(IvySolver):
                 shlex.split(self.solver_args)
             )
             self.depth = parsed_args.depth
+            self.multiclock = parsed_args.multiclock
+            if not self.engine:
+                self.engine = ["smtbmc"]
 
     async def on_prepare(self):
         self.depends_on(DesignContext.design.prepare_design())
@@ -68,6 +73,7 @@ class IvySby(IvySolver):
                     "mode prove",
                     f"depth {self.depth}",
                     "assume_early off",
+                    "multiclock on" if self.multiclock else "",
                     "",
                     "[engines]",
                     shlex.join(self.engine),
