@@ -5,7 +5,7 @@ description = "Invariants with Yosys"
 
 requires-python = ">=3.8"
 dependencies = [
-    # "yosys_mau"  # TODO publish to PyPI or use git dependency?
+    "yosys_mau @ git+https://github.com/YosysHQ/mau"
 ]
 
 [project.optional-dependencies]
