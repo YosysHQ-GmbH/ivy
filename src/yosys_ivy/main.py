@@ -329,7 +329,6 @@ def proof_event_handler(event: ProofStatusEvent):
             check_useless_tasks(status_ticks)
 
         tl.current_task().background(background)
-    # TODO check whether we can de-schedule/abort any proof tasks with this status change
 
 
 def check_useless_tasks(status_ticks: int):
@@ -339,7 +338,7 @@ def check_useless_tasks(status_ticks: int):
 
     # TODO debounce this so when many tasks finish quickly we don't spend too much time recomputing
     # the status graph again and again
-    full_status = App.status_db.reduced_status()
+    full_status = App.status_db.reduced_status(App.data)
 
     computed_status = App.data.status_map()
 
@@ -371,7 +370,7 @@ def run_status_task():
         return
     tl.log("Proof status:")
 
-    full_status = App.status_db.reduced_status()
+    full_status = App.status_db.reduced_status(App.data)
 
     computed_status = App.data.status_map()
 

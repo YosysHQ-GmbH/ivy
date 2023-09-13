@@ -77,11 +77,12 @@ def status_or_equivalent(*status: Status) -> Status:
 
 @dataclass(frozen=True, order=True)
 class IvyName:
+    data: IvyData | None
     parts: tuple[str, ...]
 
     @classmethod
-    def from_json(cls, name: list[str]) -> IvyName:
-        return cls(tuple(name))
+    def from_json(cls, data: IvyData, name: list[str]) -> IvyName:
+        return cls(data, tuple(name))
 
     @property
     def filename(self) -> str:
@@ -101,13 +102,19 @@ class IvyName:
         """RTLIL name after uniquification"""
         return ".".join([self.parts[0], *self.parts[1:-1:2]]) + f"/{self.parts[-1]}"
 
-    def __str__(self) -> str:
+    def _str_parts(self) -> list[str]:
         str_parts: list[str] = []
         for part in self.instance_names:
             if re.match(r"^[a-zA-Z0-9_]*$", part):
                 str_parts.append(part)
             else:
                 str_parts.append(f"\\{part} ")
+        return str_parts
+
+    def __str__(self) -> str:
+        str_parts = self._str_parts()
+        if self.data is not None:
+            str_parts[-1] = self.data.orig_names.get(self, str_parts[-1])
         return ".".join(str_parts)
 
     def __repr__(self):
@@ -118,8 +125,8 @@ class IvyName:
         return json.dumps(self.parts, separators=(",", ":"))
 
     @classmethod
-    def from_db_key(cls, key: str) -> IvyName:
-        return cls.from_json(json.loads(key))
+    def from_db_key(cls, data: IvyData, key: str) -> IvyName:
+        return cls.from_json(data, json.loads(key))
 
 
 @dataclass(frozen=True, order=True)
@@ -165,12 +172,23 @@ class IvyEntity(abc.ABC):
     solve_with: dict[str, int | None]
     solve_order: dict[str, int]
 
-    def __init__(self, ivy_data: IvyData, json_data: Any = None, name: IvyName | None = None):
+    def __init__(
+        self,
+        ivy_data: IvyData,
+        json_data: Any = None,
+        name: IvyName | None = None,
+    ):
         self.ivy_data = ivy_data
         self.json_data = json_data
         if self.json_data is not None:
-            self.name = IvyName(tuple(json_data["name"]))
+            self.name = IvyName(ivy_data, tuple(json_data["name"]))
             self.src_loc = self.json_data["srcloc"]
+
+            orig_name = json_data.get("orig_name", None)
+            if orig_name is not None:
+                if orig_name.endswith("()"):
+                    orig_name = orig_name[:-2]
+                self.ivy_data.orig_names[self.name] = orig_name
         else:
             assert name is not None
             self.name = name
@@ -234,10 +252,16 @@ class IvyProofItem:
     name: IvyName
 
     def __init__(self, proof: IvyProof, json_data: Any):
-        object.__setattr__(self, "name", IvyName.from_json(json_data["name"]))
+        object.__setattr__(self, "name", IvyName.from_json(proof.ivy_data, json_data["name"]))
         if self in proof.items:
-            tl.log_error("duplicate item in proof")  # TODO better error message
+            tl.log_warning(f"{proof.src_loc}: Duplicate proof item: {self}")
+
+        orig_name = json_data.get("orig_name", None)
         proof.items.add(self)
+        if orig_name is not None:
+            if orig_name.endswith("()"):
+                orig_name = orig_name[:-2]
+            proof.ivy_data.orig_names[self.name] = orig_name
 
 
 @dataclass(frozen=True)
@@ -254,6 +278,9 @@ class IvyExport(IvyProofItem):
         super().__init__(proof, json_data)
         proof.exports.add(self)
 
+    def __str__(self):
+        return f"export {self.type} {self.name}"
+
 
 @dataclass(frozen=True)
 class IvyUse(IvyProofItem):
@@ -263,6 +290,10 @@ class IvyUse(IvyProofItem):
         object.__setattr__(self, "export", json_data.get("export", False))
         super().__init__(proof, json_data)
         proof.uses.add(self)
+
+    def __str__(self):
+        export_str = "export " if self.export else ""
+        return f"{export_str}use proof {self.name}"
 
 
 @dataclass(frozen=True)
@@ -278,6 +309,10 @@ class IvyAssume(IvyProofItem):
         super().__init__(proof, json_data)
         proof.assumes.add(self)
 
+    def __str__(self):
+        cross_str = "cross " if self.cross else ""
+        return f"{cross_str}assume {self.type} {self.name}"
+
 
 @dataclass(frozen=True)
 class IvyAssert(IvyProofItem):
@@ -291,6 +326,10 @@ class IvyAssert(IvyProofItem):
         object.__setattr__(self, "local", json_data.get("local", False))
         super().__init__(proof, json_data)
         proof.asserts.add(self)
+
+    def __str__(self):
+        local_str = "local " if self.local else ""
+        return f"{local_str}assert {self.type} {self.name}"
 
 
 @dataclass(frozen=True)
@@ -311,7 +350,7 @@ class IvySolve:
 @dataclass(frozen=True)
 class IvyModuleSolve(IvySolve):
     def __init__(self, ivy_data: IvyData, json_data: Any):
-        object.__setattr__(self, "name", IvyName(tuple(json_data["name"])))
+        object.__setattr__(self, "name", IvyName(ivy_data, tuple(json_data["name"])))
         self._initialize_from_json(json_data)
         ivy_data.solves.add(self)
 
@@ -539,6 +578,8 @@ class IvySequence(IvyEntity):
 class IvyData:
     json_data: Any = field(repr=False)
 
+    orig_names: dict[IvyName, str]
+
     proofs: list[IvyProof]
     invariants: list[IvyInvariant]
     properties: list[IvyProperty]
@@ -559,6 +600,8 @@ class IvyData:
 
     def __init__(self, json_data: Any):
         self.json_data = json_data
+
+        self.orig_names = {}
 
         self.proofs = []
         self.invariants = []
@@ -586,7 +629,8 @@ class IvyData:
                     and proof_assert.name not in self.entities
                 ):
                     {"sequence": IvySequence, "property": IvyProperty}[proof_assert.type](
-                        self, proof_assert.name
+                        self,
+                        proof_assert.name,
                     )
 
         # TODO add all referenced sequences and properties so we can list them and store associated
@@ -698,6 +742,12 @@ class IvyData:
             entity.solve_order = {}
             for i, item in enumerate(order):
                 entity.solve_order[item[0]] = i
+
+    def __hash__(self):
+        return object.__hash__(self)
+
+    def __eq__(self, other: Any):
+        return object.__eq__(self, other)
 
 
 class IvyStatusGraph:

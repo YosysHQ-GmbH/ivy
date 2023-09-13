@@ -5,15 +5,15 @@ top top
 read -sv test.svi
 
 [file test.svi]
-module top();
+module top(input clk);
 
     invariant A;
         1;
     endinvariant
 
-    invariant B;
-        1;
-    endinvariant
+    property B;
+        @(posedge clk) 1;
+    endproperty
 
     invariant C;
         1;
@@ -25,14 +25,13 @@ module top();
         solve with "sby smtbmc" priority 1;
     endproof
 
-
     automatic proof export_A;
         export invariant A;
     endproof
 
     automatic proof prove_B;
         assume invariant A;
-        assert invariant B;
+        assert property B;
         solve with "dummy unknown" priority 1;
         solve with "dummy fail" priority (-1);
         solve proof prove_A;
@@ -40,7 +39,7 @@ module top();
 
     proof prove_B2;
         assume proof prove_A;
-        assert invariant B;
+        assert property B;
         solve with "dummy -r pass" priority 1;
     endproof
 
@@ -48,7 +47,7 @@ module top();
 
     automatic proof prove_B3;
         use proof export_A;
-        assert invariant B;
+        assert property B;
         solve with "dummy pass" priority (-1);
     endproof
 
@@ -62,13 +61,13 @@ assert test.run('-f') == 0
 logfile = test.logfile()
 
 assert 'invariant A: pass' in logfile
-assert 'invariant B: pass' in logfile
+assert 'property B: pass' in logfile
 assert 'proof prove_A: pass' in logfile
 assert 'proof prove_B: fail' in logfile
 assert 'proof prove_B2: error' in logfile
 assert 'proof prove_B3: pass' in logfile
 assert 'invariant A: pass' in logfile
-assert 'invariant B: pass' in logfile
+assert 'property B: pass' in logfile
 assert 'proof prove_A: pass' in logfile
 assert 'proof prove_B: fail' in logfile
 assert 'proof prove_B2: error' in logfile

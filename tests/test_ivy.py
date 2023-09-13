@@ -24,7 +24,7 @@ def test_status_db_retry():
         status_db_1 = IvyStatusDb(Path(tmpdir) / "status.sqlite", setup=True, timeout=0.1)
         status_db_2 = IvyStatusDb(Path(tmpdir) / "status.sqlite", timeout=0.1)
 
-        task_name = IvyTaskName(IvyName(("test",)), "sby")
+        task_name = IvyTaskName(IvyName(None, ("test",)), "sby")
         status_db_1.initialize_status([task_name])
 
         @transaction

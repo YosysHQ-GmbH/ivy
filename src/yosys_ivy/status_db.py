@@ -9,7 +9,7 @@ from typing import Any, Callable, Collection, Container, Iterable, TypeVar
 
 from yosys_mau import task_loop as tl
 
-from .data import IvyName, IvyTaskName, Status, status_or_equivalent
+from .data import IvyData, IvyName, IvyTaskName, Status, status_or_equivalent
 
 Fn = TypeVar("Fn", bound=Callable[..., Any])
 
@@ -74,15 +74,15 @@ class IvyStatusDb:
         )
 
     @transaction
-    def full_status(self) -> dict[IvyTaskName, Status]:
+    def full_status(self, data: IvyData) -> dict[IvyTaskName, Status]:
         cursor = self.db.execute("""SELECT name, solver, status FROM proof_status""")
         return {
-            IvyTaskName(IvyName.from_db_key(name), solver): status
+            IvyTaskName(IvyName.from_db_key(data, name), solver): status
             for name, solver, status in cursor
         }
 
-    def reduced_status(self) -> dict[IvyName, Status]:
-        full = self.full_status()
+    def reduced_status(self, data: IvyData) -> dict[IvyName, Status]:
+        full = self.full_status(data)
         grouped: defaultdict[IvyName, list[Status]] = defaultdict(list)
         for task_name, status in full.items():
             grouped[task_name.name].append(status)
@@ -90,7 +90,7 @@ class IvyStatusDb:
         return {name: status_or_equivalent(*statuses) for name, statuses in grouped.items()}
 
     @transaction
-    def status(self, names: Collection[IvyName]) -> dict[IvyTaskName, Status]:
+    def status(self, data: IvyData, names: Collection[IvyName]) -> dict[IvyTaskName, Status]:
         cursor = self.db.execute(
             """
                 SELECT name, solver, status FROM proof_status, json_each(?)
@@ -99,7 +99,7 @@ class IvyStatusDb:
             (json.dumps([name.db_key for name in names]),),
         )
         return {
-            IvyTaskName(IvyName.from_db_key(name), solver): status
+            IvyTaskName(IvyName.from_db_key(data, name), solver): status
             for name, solver, status in cursor
         }
 

@@ -1,0 +1,36 @@
+[options]
+top top
+
+[read]
+read -sv test.svi
+
+[file test.svi]
+module top(input clk, input en, input a, input b, output reg y);
+
+    always @(posedge clk)
+        if (en)
+            y <= a ^ b;
+
+    invariant y_def(condition);
+        condition -> $future_ff(y) == a ^ b;
+    endinvariant
+
+
+    automatic proof show_y_def_unconditional;
+        assert invariant y_def('1);
+    endproof;
+
+    automatic proof show_y_def;
+        assert invariant y_def(en);
+    endproof;
+
+endmodule
+
+[ivy_self_test]
+
+assert test.run('-f') == 0
+logfile = test.logfile()
+assert "invariant y_def(.condition(1'b1)): fail" in logfile
+assert "invariant y_def(.condition(en)): pass" in logfile
+assert "proof show_y_def: pass" in logfile
+assert "proof show_y_def_unconditional: fail" in logfile

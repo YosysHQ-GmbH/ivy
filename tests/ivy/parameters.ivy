@@ -1,0 +1,45 @@
+[options]
+top top
+
+[read]
+read -sv test.svi
+
+[file test.svi]
+module top(input clk, input a, input b);
+
+    wire x0 = a;
+    wire x1 = x0 ^ b; // a ^ b
+    wire x2 = x1 ^ a; // b
+    wire x3 = x2 ^ b; // 0
+    wire x4 = x3 ^ a; // a
+
+    invariant same(A, B);
+        A == B;
+    endinvariant
+
+    invariant is_a(X);
+        X == a;
+    endinvariant
+
+    proof same_proof(X, Y);
+        assert invariant same(X, Y);
+    endproof
+
+    solve proof same_proof(x2, b);
+    solve proof same_proof(x3, '0);
+    solve proof same_proof(x4, a);
+
+    solve invariant is_a(x4);
+
+endmodule
+
+[ivy_self_test]
+
+assert test.run('-f') == 0
+logfile = test.logfile()
+assert "invariant same(.A(x2).B(b)): pass" in logfile
+assert "invariant same(.A(x3).B(1'b0)): pass" in logfile
+assert "invariant same(.A(x4).B(a)): pass" in logfile
+assert "proof same_proof(.X(x2).Y(b)): pass" in logfile
+assert "proof same_proof(.X(x3).Y(1'b0)): pass" in logfile
+assert "proof same_proof(.X(x4).Y(a)): pass" in logfile
