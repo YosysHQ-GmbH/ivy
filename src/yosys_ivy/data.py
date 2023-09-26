@@ -86,7 +86,7 @@ class IvyName:
 
     @property
     def filename(self) -> str:
-        str_parts = list(self.parts)
+        str_parts = list(self.instance_names)
         if self.data is not None:
             str_parts[-1] = self.data.orig_names.get(self, str_parts[-1])
         joined = ".".join(str_parts)
