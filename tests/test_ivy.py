@@ -10,7 +10,7 @@ from yosys_ivy.data import IvyName, IvyTaskName
 from yosys_ivy.sccs import find_sccs
 from yosys_ivy.status_db import IvyStatusDb, transaction
 from yosys_mau.config_parser import split_into_sections
-from yosys_mau.source_str import read_file, source_map
+from yosys_mau.source_str import plain_str, read_file, source_map
 
 
 def test_find_sccs():
@@ -57,9 +57,12 @@ def test_status_db_retry():
 
 
 ivy_file_test_dir = Path(__file__).parent / "ivy"
+ivy_file_example_dir = Path(__file__).parent.parent / "examples"
 
 ivy_files = [
-    str(path.relative_to(ivy_file_test_dir)) for path in ivy_file_test_dir.rglob("**/*.ivy")
+    str(path.relative_to(ivy_file_test_dir))
+    for ext in ["ivy", "ivyex"]
+    for path in ivy_file_test_dir.rglob(f"**/*.{ext}")
 ]
 
 
@@ -72,6 +75,9 @@ def test_ivy(ivy_file: str):
         for section in split_into_sections(read_file(ivy_path))
         if section.name == "ivy_self_test"
     )
+
+    if section.arguments:
+        ivy_path = ivy_file_example_dir / plain_str(section.arguments)
 
     span = source_map(section.contents).spans[0]
     line_no = span.file.text_position(span.file_start)[0]
