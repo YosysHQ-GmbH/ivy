@@ -108,7 +108,7 @@ class IvyName:
     def _str_parts(self) -> list[str]:
         str_parts: list[str] = []
         for part in self.instance_names:
-            if re.match(r"^[a-zA-Z0-9_]*$", part):
+            if re.match(r"^[a-zA-Z0-9_]*(\[[0-9]+\])?$", part):
                 str_parts.append(part)
             else:
                 str_parts.append(f"\\{part} ")
