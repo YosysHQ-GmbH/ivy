@@ -206,7 +206,7 @@ class IvyExportJson(tl.Process):
                 f"verific -ivy-json-export ../ivy_export.json -top {App.config.options.top}",
                 "verific -assert-all-invariants",
                 "verific -delete-all-proofs",
-                f"verific -import {App.config.options.top}",
+                f"verific -import -extnets {App.config.options.top}",
                 f"hierarchy -top {App.config.options.top}",
                 App.config.script,
                 "write_rtlil ../model/export.il",

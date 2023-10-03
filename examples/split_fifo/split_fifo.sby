@@ -1,0 +1,31 @@
+[tasks]
+smtbmc
+pdr
+
+[options]
+mode prove
+depth 20
+
+[engines]
+pdr: abc
+smtbmc: smtbmc
+
+[script]
+read -sv split_fifo.sv
+read -sv assert.sv
+prep -top top
+
+[files]
+split_fifo.sv
+
+[file assert.sv]
+
+module top_assertions (
+    input rst
+);
+    always @* assume(rst == $initstate);
+
+    assert property (top.progress);
+endmodule
+
+bind top top_assertions asserts (.*);

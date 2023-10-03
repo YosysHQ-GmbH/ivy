@@ -86,7 +86,7 @@ class IvyName:
 
     @property
     def filename(self) -> str:
-        str_parts = list(self.parts)
+        str_parts = list(self.instance_names)
         if self.data is not None:
             str_parts[-1] = self.data.orig_names.get(self, str_parts[-1])
         joined = ".".join(str_parts)
@@ -108,7 +108,7 @@ class IvyName:
     def _str_parts(self) -> list[str]:
         str_parts: list[str] = []
         for part in self.instance_names:
-            if re.match(r"^[a-zA-Z0-9_]*$", part):
+            if re.match(r"^[a-zA-Z0-9_]*(\[[0-9]+\])?$", part):
                 str_parts.append(part)
             else:
                 str_parts.append(f"\\{part} ")

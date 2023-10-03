@@ -1,0 +1,5 @@
+[ivy_self_test split_fifo/split_fifo.ivy]
+
+assert test.run('-f') == 0
+logfile = test.logfile()
+assert 'property progress: pass' in logfile
