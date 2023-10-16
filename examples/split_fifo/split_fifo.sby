@@ -7,7 +7,7 @@ mode prove
 depth 20
 
 [engines]
-pdr: abc
+pdr: abc pdr
 smtbmc: smtbmc
 
 [script]
