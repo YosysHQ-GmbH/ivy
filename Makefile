@@ -37,13 +37,12 @@ PYTHON ?= python3
 SPHINXBUILD ?= $(PYTHON) -m sphinx-build
 
 .PHONY: help docs test formatting reformat lint fix
-.PHONY: typecheck typecheck-pyright typecheck-mypy ci
+.PHONY: typecheck ci
 
 docs: docs-html
 
 docs-%:
-	# $(MAKE) -C docs $*
-	@echo TODO setup sphinx
+	$(MAKE) -C docs $*
 
 test:
 	$(PYTHON) -m pytest \
