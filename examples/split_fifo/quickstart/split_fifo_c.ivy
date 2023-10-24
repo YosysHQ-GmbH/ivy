@@ -1,0 +1,10 @@
+[options]
+top top
+
+[read]
+read -sv split_fifo.sv
+read -sv split_fifo_invariants_c.svi
+
+[files]
+../split_fifo.sv
+split_fifo_invariants_c.svi

@@ -37,17 +37,7 @@ bind fifo fifo_invariants #(
 
 // Next we define an invariant for a "lane" which consists of an input FIFO, a
 // variable-time multiplier and an output FIFO.
-module lane_invariants #(WIDTH, DEPTH_BITS) (
-    input clk,
-    input rst,
-    input in_ready,
-    input in_valid,
-    input out_ready,
-    input out_valid
-);
-    // Setup the clock used by `$past` within this helper module.
-    default clocking def_clk @(posedge clk); endclocking
-
+module lane_invariants #(WIDTH, DEPTH_BITS);
     // The number of multiplication requests currently in flight for a lane is
     // the number of requests buffered in the input fifo, the number of
     // requests buffered in the output fifo and an additional requests if the
@@ -57,26 +47,13 @@ module lane_invariants #(WIDTH, DEPTH_BITS) (
         + lane.out_fifo.invs.level
         + !lane.multiplier.in_ready;
 
-    // We track whether we have an incoming or outgoing transfer.
-    wire transfer_in = in_ready && in_valid;
-    wire transfer_out = out_ready && out_valid;
-
-    // The number of in flight requests can only change due to an incoming or
-    // outgoing transfer. Note that this invariant is only valid when neither
-    // the current nor the previous cycle was a reset cycle.
-    invariant in_flight_delta;
-        disable iff (rst || $past(rst))
-        in_flight == $past(in_flight + (transfer_in - transfer_out));
-    endinvariant
-
-    // Using k-induction alone, it's not possible to prove this invariant. To
-    // make this invariant k-inductive, we can assume the invariants of the
-    // input and output FIFOs.
-    automatic proof in_flight_delta_p;
-        assume invariant lane.in_fifo.invs.level_max;
-        assume invariant lane.out_fifo.invs.level_max;
-
-        assert invariant in_flight_delta;
+    // Proofs can export invariants. Those invariants can then be added as
+    // assumptions to another proof with a single `use proof`. Here we use a
+    // "proof" that doesn't actually assert anything, so it serves just as a
+    // group of assumptions.
+    proof fifo_level_max;
+        export invariant lane.in_fifo.invs.level_max;
+        export invariant lane.out_fifo.invs.level_max;
     endproof
 endmodule
 
@@ -102,21 +79,25 @@ module top_invariants (
         top.lane[0].invs.in_flight == top.lane[1].invs.in_flight;
     endinvariant
 
+
     // To prove this, we use the per-lane invariant that specifies how the
     // number of in-flight requests can change due to incoming and outgoing
     // transfers.
     automatic proof same_in_flight_p;
-        // Using `export` in proofs allows grouping multiple invariants so that
-        // they can be added as assumptions with a single `use proof` below.
-        export assume invariant top.lane[0].invs.in_flight_delta;
-        export assume invariant top.lane[1].invs.in_flight_delta;
+        use proof top.lane[0].invs.fifo_level_max;
+        use proof top.lane[1].invs.fifo_level_max;
 
-        export assert invariant same_in_flight;
+        assert invariant same_in_flight;
     endproof
 
-    // With these assumptions, our `progress` properties becomes k-inductive.
+    // Assuming the number of in-flight requests stays the same across both
+    // lanes and assuming that the FIFOs are not exceeding their capacity, our
+    // `progress` properties becomes k-inductive.
     automatic proof progress_p;
-        use proof same_in_flight_p;
+        assume invariant same_in_flight;
+
+        use proof top.lane[0].invs.fifo_level_max;
+        use proof top.lane[1].invs.fifo_level_max;
 
         // Proofs can directly assert SVA properties.
         assert property top.progress;

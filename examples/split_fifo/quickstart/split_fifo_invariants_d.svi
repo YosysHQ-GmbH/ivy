@@ -1,0 +1,69 @@
+module fifo_invariants #(DEPTH_BITS);
+    (* keep *)
+    wire [DEPTH_BITS:0] level = fifo.write_addr - fifo.read_addr;
+
+    invariant level_max;
+        disable iff (fifo.rst)
+        level <= 1 << DEPTH_BITS;
+    endinvariant
+
+    automatic proof level_max_p;
+        assert invariant level_max;
+    endproof
+endmodule
+
+bind fifo fifo_invariants #(
+    .DEPTH_BITS(DEPTH_BITS)
+) invs (.*);
+
+module lane_invariants #(WIDTH, DEPTH_BITS) (
+    input clk,
+    input rst,
+    input in_ready,
+    input in_valid,
+    input out_ready,
+    input out_valid
+);
+    (* keep *)
+    wire [DEPTH_BITS+2:0] in_flight =
+        lane.in_fifo.invs.level
+        + lane.out_fifo.invs.level
+        + !lane.multiplier.in_ready;
+
+    proof fifo_level_max;
+        export invariant lane.in_fifo.invs.level_max;
+        export invariant lane.out_fifo.invs.level_max;
+    endproof
+endmodule
+
+bind lane lane_invariants #(
+    .WIDTH(WIDTH), .DEPTH_BITS(DEPTH_BITS)
+) invs (.*);
+
+module top_invariants (
+    input rst
+);
+    initial assume (rst);
+
+    invariant same_in_flight;
+        disable iff (rst)
+        top.lane[0].invs.in_flight == top.lane[1].invs.in_flight;
+    endinvariant
+
+    automatic proof same_in_flight_p;
+        assert invariant same_in_flight;
+    endproof
+
+    automatic proof progress_p;
+        assume invariant same_in_flight;
+
+        use proof top.lane[0].invs.fifo_level_max;
+        use proof top.lane[1].invs.fifo_level_max;
+
+        assert property top.progress;
+
+        solve with "sby --depth 10";
+    endproof
+endmodule
+
+bind top top_invariants invs (.*);

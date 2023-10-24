@@ -1,0 +1,13 @@
+module top_invariants (
+    input rst
+);
+    initial assume (rst);
+
+    automatic proof progress_p;
+        assert property top.progress;
+
+        solve with "sby --depth 10";
+    endproof
+endmodule
+
+bind top top_invariants invs (.*);

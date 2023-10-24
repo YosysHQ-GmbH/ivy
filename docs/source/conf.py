@@ -18,11 +18,15 @@ copyright = "2023 YosysHQ GmbH"
 extensions = [
     "sphinx.ext.autosectionlabel",
     "sphinx.ext.todo",
+    "sphinx.ext.graphviz",
+    "sphinxcontrib.wavedrom",
+    "sphinxarg.ext",
 ]
 
 templates_path = ["_templates"]
 exclude_patterns = []
 default_role = "any"
+suppress_warnings = ['autosectionlabel.*']
 
 # -- Options for HTML output -------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#options-for-html-output
@@ -64,3 +68,7 @@ autosectionlabel_prefix_document = True
 todo_include_todos = True
 todo_link_only = True
 
+# -- Options for graphviz ----------------------------------------------------
+
+graphviz_output_format = 'svg'
+graphviz_dot_args = [f"-{flag}fontname=Helvetica" for flag in "GNE"]

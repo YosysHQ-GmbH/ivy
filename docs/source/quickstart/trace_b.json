@@ -1,0 +1,52 @@
+{
+  "signal": [
+    {
+      "name": "clk",
+      "wave": "PPPPPPPPPPPP",
+      "data": []
+    },
+    {
+      "name": "rst",
+      "wave": "0...........",
+      "data": []
+    },
+    {},
+    [
+      "lane[0]",
+      {
+        "name": "in_fifo.invs.level",
+        "wave": "==......=...",
+        "data": [4, 3, 4]
+      },
+      {
+        "name": "multiplier.in_ready",
+        "wave": "10..........",
+        "data": []
+      },
+      {
+        "name": "out_fifo.invs.level",
+        "wave": "=...........",
+        "data": [4]
+      }
+    ],
+    {},
+    [
+      "lane[1]",
+      {
+        "name": "in_fifo.invs.level",
+        "wave": "=.......==..",
+        "data": [0, 1, 0]
+      },
+      {
+        "name": "multiplier.in_ready",
+        "wave": "1........0..",
+        "data": []
+      },
+      {
+        "name": "out_fifo.invs.level",
+        "wave": "=...........",
+        "data": [0]
+      }
+    ]
+  ]
+}

@@ -1,0 +1,45 @@
+module fifo_invariants #(DEPTH_BITS);
+    (* keep *)
+    wire [DEPTH_BITS:0] level = fifo.write_addr - fifo.read_addr;
+endmodule
+
+bind fifo fifo_invariants #(
+    .DEPTH_BITS(DEPTH_BITS)
+) invs (.*);
+
+module lane_invariants #(WIDTH, DEPTH_BITS);
+    (* keep *)
+    wire [DEPTH_BITS+2:0] in_flight =
+        lane.in_fifo.invs.level
+        + lane.out_fifo.invs.level
+        + !lane.multiplier.in_ready;
+endmodule
+
+bind lane lane_invariants #(
+    .WIDTH(WIDTH), .DEPTH_BITS(DEPTH_BITS)
+) invs (.*);
+
+module top_invariants (
+    input rst
+);
+    initial assume (rst);
+
+    invariant same_in_flight;
+        disable iff (rst)
+        top.lane[0].invs.in_flight == top.lane[1].invs.in_flight;
+    endinvariant
+
+    automatic proof same_in_flight_p;
+        assert invariant same_in_flight;
+    endproof
+
+    automatic proof progress_p;
+        assume invariant same_in_flight;
+
+        assert property top.progress;
+
+        solve with "sby --depth 10";
+    endproof
+endmodule
+
+bind top top_invariants invs (.*);
