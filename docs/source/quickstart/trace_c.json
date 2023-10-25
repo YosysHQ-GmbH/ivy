@@ -1,0 +1,64 @@
+{
+  "signal": [
+    {
+      "name": "clk",
+      "wave": "PPPPPPPPPPPP",
+      "data": []
+    },
+    {
+      "name": "rst",
+      "wave": "0...........",
+      "data": []
+    },
+    {},
+    [
+      "lane[0]",
+      {
+        "name": "in_fifo.invs.level",
+        "wave": "=.=.=.==..=.",
+        "data": [0, 1, 0, 1, 0, 1]
+      },
+      {
+        "name": "multiplier.in_ready",
+        "wave": "0..10.10....",
+        "data": []
+      },
+      {
+        "name": "out_fifo.invs.level",
+        "wave": "==.=..=.....",
+        "data": [7, 6, 7, 0]
+      },
+      {},
+      {
+        "name": "invs.in_flight",
+        "wave": "===...=...=.",
+        "data": [8, 7, 8, 1, 2]
+      }
+    ],
+    {},
+    [
+      "lane[1]",
+      {
+        "name": "in_fifo.invs.level",
+        "wave": "===...=...=.",
+        "data": [7, 6, 7, 0, 1]
+      },
+      {
+        "name": "multiplier.in_ready",
+        "wave": "10....1.....",
+        "data": []
+      },
+      {
+        "name": "out_fifo.invs.level",
+        "wave": "==....=.....",
+        "data": [1, 0, 1]
+      },
+      {},
+      {
+        "name": "invs.in_flight",
+        "wave": "===...=...=.",
+        "data": [8, 7, 8, 1, 2]
+      }
+    ]
+  ]
+}

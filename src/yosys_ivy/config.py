@@ -13,7 +13,11 @@ from .data import IvyData, IvyTaskName
 from .status_db import IvyStatusDb
 
 
-def arg_parser() -> argparse.ArgumentParser:
+def sphinx_docs_arg_parser() -> argparse.ArgumentParser:
+    return arg_parser(sphinx_docs=True)
+
+
+def arg_parser(sphinx_docs=False) -> argparse.ArgumentParser:
     global_options = argparse.ArgumentParser(add_help=False)
     usage = "%(prog)s [options] <config>.ivy"
     parser = argparse.ArgumentParser(prog="ivy", usage=usage, parents=[global_options])
@@ -41,6 +45,8 @@ def arg_parser() -> argparse.ArgumentParser:
         default=None,
     )
 
+    parents = [] if sphinx_docs else [global_options]
+
     parser.add_argument("ivy_file", metavar="<config>.ivy", help=".ivy file", type=Path)
 
     commands = parser.add_subparsers(
@@ -50,14 +56,14 @@ def arg_parser() -> argparse.ArgumentParser:
     commands.add_parser(
         "setup",
         usage="%(prog)s",
-        parents=[global_options],
+        parents=parents,
         help="read SystemVerilog+IVY sources and setup the work directory",
     )
 
     cmd_run = commands.add_parser(
         "run",
         usage="%(prog)s [proofs...]",
-        parents=[global_options],
+        parents=parents,
         help="setup and run all proof tasks (default command)",
     )
 
@@ -66,7 +72,7 @@ def arg_parser() -> argparse.ArgumentParser:
     cmd_prove = commands.add_parser(
         "prove",
         usage="%(prog)s [proofs...]",
-        parents=[global_options],
+        parents=parents,
         help="run proof tasks",
     )
 
@@ -80,7 +86,7 @@ def arg_parser() -> argparse.ArgumentParser:
     cmd_status = commands.add_parser(
         "status",
         usage="%(prog)s [proofs...]",
-        parents=[global_options],
+        parents=parents,
         help="show the current proof status",
     )
 

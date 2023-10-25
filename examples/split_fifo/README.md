@@ -1,5 +1,7 @@
 # Split FIFO Example
 
+See https://yosyshq.readthedocs.io/projects/ivy/en/latest/quickstart.html for a getting started guide based on this example.
+
 This example contains a design that takes pair of requests and processes them
 in two independent lanes. Each requests can take a variable number of cycles,
 so each lane has an input and output FIFO to buffer single requests or

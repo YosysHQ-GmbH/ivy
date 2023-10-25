@@ -7,7 +7,7 @@ mode prove
 depth 20
 
 [engines]
-pdr: abc
+pdr: abc pdr
 smtbmc: smtbmc
 
 [script]
@@ -25,7 +25,7 @@ module top_assertions (
 );
     always @* assume(rst == $initstate);
 
-    assert property (top.progress);
+    progress: assert property (top.progress);
 endmodule
 
 bind top top_assertions asserts (.*);

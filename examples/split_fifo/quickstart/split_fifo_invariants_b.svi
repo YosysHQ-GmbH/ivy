@@ -1,0 +1,23 @@
+module fifo_invariants #(DEPTH_BITS);
+    (* keep *)
+    wire [DEPTH_BITS:0] level = fifo.write_addr - fifo.read_addr;
+endmodule
+
+bind fifo fifo_invariants #(
+    .DEPTH_BITS(DEPTH_BITS)
+) invs (.*);
+
+
+module top_invariants (
+    input rst
+);
+    initial assume (rst);
+
+    automatic proof progress_p;
+        assert property top.progress;
+
+        solve with "sby --depth 10";
+    endproof
+endmodule
+
+bind top top_invariants invs (.*);
