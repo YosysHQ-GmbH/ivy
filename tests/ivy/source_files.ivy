@@ -14,4 +14,3 @@ logfile = test.logfile()
 
 assert 'invariant trivial: pass' in logfile
 assert 'proof prove_trivial: pass' in logfile
-

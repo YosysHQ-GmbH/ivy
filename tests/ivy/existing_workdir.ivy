@@ -20,4 +20,3 @@ endmodule
 
 assert test.run('-f') == 0
 assert test.run() != 0
-

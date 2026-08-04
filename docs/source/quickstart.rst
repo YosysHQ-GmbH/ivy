@@ -385,5 +385,3 @@ If we inspect the produced induction counter-examples for the `same_in_flight` i
      proof lane[1].out_fifo.invs.level_max_p: pass
      proof output_fifo.invs.level_max_p: pass
      property progress: pass
-
-
